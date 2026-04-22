@@ -1,0 +1,96 @@
+{
+  "version": "1.0",
+  "roi": {
+    "enabled": true,
+    "points": [
+      [
+        1910,
+        778
+      ],
+      [
+        1550,
+        207
+      ],
+      [
+        1162,
+        209
+      ],
+      [
+        10,
+        422
+      ],
+      [
+        10,
+        1070
+      ],
+      [
+        1910,
+        1033
+      ]
+    ]
+  },
+  "lanes": [
+    {
+      "id": 2,
+      "name": "Lane 2",
+      "enabled": true,
+      "color": "#FF8800",
+      "line": {
+        "x1": 978,
+        "y1": 746,
+        "x2": 575,
+        "y2": 745
+      },
+      "direction": "both",
+      "arrow_in": "top_to_bottom",
+      "count_in": true,
+      "count_out": true
+    },
+    {
+      "id": 3,
+      "name": "Lane 3",
+      "enabled": true,
+      "color": "#00AAFF",
+      "line": {
+        "x1": 975,
+        "y1": 744,
+        "x2": 1470,
+        "y2": 738
+      },
+      "direction": "both",
+      "arrow_in": "top_to_bottom",
+      "count_in": true,
+      "count_out": true
+    },
+    {
+      "id": 4,
+      "name": "Lane 4",
+      "enabled": true,
+      "color": "#FF00FF",
+      "line": {
+        "x1": 559,
+        "y1": 744,
+        "x2": 23,
+        "y2": 749
+      },
+      "direction": "both",
+      "arrow_in": "top_to_bottom",
+      "count_in": true,
+      "count_out": true
+    }
+  ],
+  "camera": {
+    "source": "https://68ftd-pksv1.enixma.net/live/10.210.200.34.stream/playlist.m3u8",
+    "width": 1280,
+    "height": 960
+  },
+  "yolo": {
+    "onnx": "D:/workspace/python/counting_app/model_compare/yolov8n/run5/weights/best.onnx",
+    "names": "D:/workspace/python/counting_app/old_win_code/models/coco_drr7.names",
+    "cfg": "D:/workspace/python/counting_app/old_win_code/models/yolov4-tiny-drr7-day.cfg",
+    "weights": "D:/workspace/python/counting_app/old_win_code/models/yolov4-tiny-drr7-day.weights",
+    "input_size": 416,
+    "conf": 0.2,
+    "nms": 0.4
+  }
+}
