@@ -817,53 +817,131 @@ def _dir_short(arrow_in: str) -> str:
 
 
 def draw_mode_hud(frame: np.ndarray, ui: UIState, cfg: SceneCfg):
+    # ── colour tokens — same palette as draw_count_panel ────────
+    C_WHITE  = (255, 255, 255)
+    C_GRAY   = (160, 158, 155)
+    C_BLUE   = (255, 122,   0)
+    C_GREEN  = ( 89, 199,  52)
+    C_TEAL   = (  0, 200, 220)
+    C_ORANGE = (  0, 180, 255)
+    C_LIME   = (  0, 220, 100)
+
+    FONT  = cv2.FONT_HERSHEY_SIMPLEX
+    PAD   = 18
+    LH    = 34   # line height
+    FS_H  = 0.60 # header / badge
+    FS_B  = 0.54 # body description
+    FS_K  = 0.50 # key label
+    DOT_R = 6
+
+    # ── rows: (key_label, description, key_colour) ──────────────
     if ui.mode == UIMode.NONE:
-        line1 = "[ E ] Edit   [ L ] Add Lane   [ S ] Save   [ Q ] Quit"
-        line2 = ""
+        badge     = "SHORTCUTS"
+        badge_col = C_GRAY
+        rows = [
+            ("[E]",       "Edit scene",      C_TEAL),
+            ("[L]",       "Add lane",        C_LIME),
+            ("[S]",       "Save config",     C_BLUE),
+            ("[Q]",       "Quit",            C_GRAY),
+        ]
+        ctx: list = []
     elif ui.mode == UIMode.EDIT_SCENE:
-        line1 = "[ R ] ROI   [ L ] Add Lane   [ D ] Del Lane   [ C ] Clr ROI   [ S ] Save"
+        badge     = "EDIT MODE"
+        badge_col = C_TEAL
+        rows = [
+            ("[R]",       "Draw ROI",        C_ORANGE),
+            ("[L]",       "Add lane",        C_LIME),
+            ("[D]",       "Delete lane",     C_GRAY),
+            ("[C]",       "Clear ROI",       C_GRAY),
+            ("[S]",       "Save",            C_BLUE),
+            ("[ESC]",     "Exit edit",       C_GRAY),
+        ]
         if 0 <= ui.selected_lane < len(cfg.lanes):
-            sl    = cfg.lanes[ui.selected_lane]
-            line2 = f"Lane: {sl.name}  Dir: {sl.arrow_in}  [ Tab ] cycle dir   [ ESC ] Exit Edit"
+            sl  = cfg.lanes[ui.selected_lane]
+            ctx = [
+                f"Lane: {sl.name}",
+                f"Dir:  {_dir_short(sl.arrow_in)}",
+                "[Tab]  Cycle direction",
+            ]
         elif ui.selected_roi_pt >= 0:
-            line2 = f"ROI pt {ui.selected_roi_pt}   Arrow keys: nudge   Right-click delete   [ ESC ]"
+            ctx = [
+                f"ROI point {ui.selected_roi_pt} selected",
+                "Arrow keys to nudge",
+                "Right-click to delete",
+            ]
         else:
-            line2 = "Drag ROI pts / lane endpoints   Right-click delete   [ ESC ] Exit Edit"
+            ctx = [
+                "Drag ROI pts or lane endpoints",
+                "Right-click to delete a point",
+            ]
     elif ui.mode == UIMode.DRAW_ROI:
-        line1 = "Click to add ROI points"
-        line2 = "Right-click to finish   [ ESC ] Cancel"
+        badge     = "DRAW ROI"
+        badge_col = C_ORANGE
+        rows = [
+            ("Click",     "Add ROI point",   C_WHITE),
+            ("[R-Click]", "Finish ROI",      C_GREEN),
+            ("[ESC]",     "Cancel",          C_GRAY),
+        ]
+        ctx = []
     else:  # ADD_LANE
-        line1 = "Click + drag to place a lane"
-        line2 = "Release to commit   [ ESC ] Cancel"
+        badge     = "ADD LANE"
+        badge_col = C_LIME
+        rows = [
+            ("Drag",      "Draw lane line",  C_WHITE),
+            ("Release",   "Commit lane",     C_GREEN),
+            ("[ESC]",     "Cancel",          C_GRAY),
+        ]
+        ctx = []
 
-    FONT = cv2.FONT_HERSHEY_SIMPLEX
-    FS   = 0.40
-    TH   = 1
-    PAD  = 8
-    (w1, h1), _ = cv2.getTextSize(line1, FONT, FS, TH)
-    (w2, h2), _ = cv2.getTextSize(line2, FONT, FS, TH) if line2 else ((0, h1), 0)
-    ROW_H  = h1 + PAD
-    panelW = max(w1, w2) + PAD * 2
-    panelH = (ROW_H + PAD) if not line2 else (ROW_H * 2 + PAD)
-    px = frame.shape[1] - panelW - 4
-    py = frame.shape[0] - panelH - 4
+    # ── geometry ────────────────────────────────────────────────
+    KEY_COL_W  = max(cv2.getTextSize(k, FONT, FS_K, 1)[0][0] for k, _, _ in rows) + 14
+    max_desc_w = max(cv2.getTextSize(d, FONT, FS_B, 1)[0][0] for _, d, _ in rows)
+    max_ctx_w  = max((cv2.getTextSize(c, FONT, FS_B, 1)[0][0] for c in ctx), default=0)
+    (bw, _), _ = cv2.getTextSize(badge, FONT, FS_H, 1)
+    badge_w    = DOT_R * 2 + 6 + bw
 
-    cv2.rectangle(frame, (px, py), (px+panelW, py+panelH), (20,20,20), cv2.FILLED)
-    brd = (0,200,220) if ui.mode == UIMode.EDIT_SCENE else (80,80,80)
-    bw2 = 2 if ui.mode == UIMode.EDIT_SCENE else 1
-    cv2.rectangle(frame, (px, py), (px+panelW, py+panelH), brd, bw2)
+    W = max(badge_w, KEY_COL_W + max_desc_w, max_ctx_w) + PAD * 2 + 10
+    H = (PAD
+         + LH                                                   # header
+         + 8 + 1 + 10                                          # divider
+         + len(rows) * LH
+         + (8 + 1 + 10 + len(ctx) * LH if ctx else 0)
+         + PAD)
 
-    badge = {UIMode.EDIT_SCENE: " EDIT ", UIMode.DRAW_ROI: " DRAW ROI ", UIMode.ADD_LANE: " ADD LANE "}.get(ui.mode)
-    badge_col = {UIMode.EDIT_SCENE: (0,200,220), UIMode.DRAW_ROI: (0,180,255), UIMode.ADD_LANE: (0,220,100)}.get(ui.mode)
-    if badge:
-        (bsz_w, bsz_h), _ = cv2.getTextSize(badge, FONT, FS, TH)
-        cv2.rectangle(frame, (px, py), (px+bsz_w+6, py+bsz_h+6), badge_col, cv2.FILLED)
-        cv2.putText(frame, badge, (px+3, py+bsz_h+2), FONT, FS, (0,0,0), TH, cv2.LINE_AA)
+    fh, fw = frame.shape[:2]
+    X = fw - W - 10
+    Y = 10
 
-    ty = py + ROW_H
-    cv2.putText(frame, line1, (px+PAD, ty), FONT, FS, (200,200,200), TH, cv2.LINE_AA)
-    if line2:
-        cv2.putText(frame, line2, (px+PAD, ty+ROW_H), FONT, FS, (160,160,160), TH, cv2.LINE_AA)
+    _ios_panel(frame, X, Y, W, H)
+
+    cy = Y + PAD + LH - 6
+
+    # ── header row ──────────────────────────────────────────────
+    cv2.circle(frame, (X + PAD + DOT_R, cy - 4), DOT_R, badge_col, -1, cv2.LINE_AA)
+    _put(frame, badge, X + PAD + DOT_R * 2 + 6, cy, FS_H, badge_col)
+    cy += 8
+    cv2.line(frame, (X + PAD, cy), (X + W - PAD, cy), (60, 58, 55), 1)
+    cy += 10
+
+    # ── key rows ────────────────────────────────────────────────
+    for key_str, desc, key_col in rows:
+        (kw, kh), _ = cv2.getTextSize(key_str, FONT, FS_K, 1)
+        kx = X + PAD
+        cv2.rectangle(frame, (kx,     cy - kh - 3), (kx + kw + 6, cy + 3), (35, 35, 35), cv2.FILLED)
+        cv2.rectangle(frame, (kx,     cy - kh - 3), (kx + kw + 6, cy + 3), key_col, 1)
+        _put(frame, key_str, kx + 3,              cy, FS_K, key_col)
+        _put(frame, desc,    X + PAD + KEY_COL_W, cy, FS_B, C_WHITE)
+        cy += LH
+
+    # ── context rows ────────────────────────────────────────────
+    if ctx:
+        cy += 4
+        cv2.line(frame, (X + PAD, cy), (X + W - PAD, cy), (60, 58, 55), 1)
+        cy += 10
+        for line in ctx:
+            col = C_TEAL if line.startswith("[") else C_GRAY
+            _put(frame, line, X + PAD, cy, FS_B, col)
+            cy += LH
 
 
 def _ios_panel(frame: np.ndarray, x: int, y: int, w: int, h: int,
@@ -911,17 +989,17 @@ def draw_count_panel(frame: np.ndarray,
     C_NIGHT   = (120,  60,  20)   # dark blue (night)
 
     FONT  = cv2.FONT_HERSHEY_SIMPLEX
-    PAD   = 14
-    LH    = 30    # line height
-    FS_H  = 0.56  # header font scale
-    FS_B  = 0.52  # body font scale
+    PAD   = 18
+    LH    = 36    # line height
+    FS_H  = 0.64  # header font scale
+    FS_B  = 0.58  # body font scale
 
     # Count only rows that have activity
     active = [(n, ic, oc) for n, (ic, oc) in sorted(counts.items()) if ic+oc > 0]
     n_rows = len(active) if active else 1
 
     # Panel geometry
-    W = 290
+    W = 340
     H = (PAD                  # top padding
          + LH                 # title row  (FPS + mode)
          + 6                  # gap
@@ -952,9 +1030,9 @@ def draw_count_panel(frame: np.ndarray,
     cy += 10
 
     # ── Column headers ───────────────────────────────
-    _put(frame, "Class",  X+PAD,       cy, 0.36, C_GRAY)
-    _put(frame, "In",     X+W-PAD-62,  cy, 0.36, C_GRAY)
-    _put(frame, "Out",    X+W-PAD-22,  cy, 0.36, C_GRAY)
+    _put(frame, "Class",  X+PAD,       cy, 0.44, C_GRAY)
+    _put(frame, "In",     X+W-PAD-72,  cy, 0.44, C_GRAY)
+    _put(frame, "Out",    X+W-PAD-26,  cy, 0.44, C_GRAY)
     cy += LH
 
     # ── Class rows ───────────────────────────────────
@@ -968,13 +1046,13 @@ def draw_count_panel(frame: np.ndarray,
             # IN count (green)
             in_str = str(in_cnt)
             (iw, _), _ = cv2.getTextSize(in_str, FONT, FS_B, 1)
-            _put(frame, in_str, X+W-PAD-62-iw, cy, FS_B,
+            _put(frame, in_str, X+W-PAD-72-iw, cy, FS_B,
                  C_GREEN if in_cnt > 0 else C_GRAY)
 
             # OUT count (red)
             out_str = str(out_cnt)
             (ow, _), _ = cv2.getTextSize(out_str, FONT, FS_B, 1)
-            _put(frame, out_str, X+W-PAD-22-ow, cy, FS_B,
+            _put(frame, out_str, X+W-PAD-26-ow, cy, FS_B,
                  C_RED if out_cnt > 0 else C_GRAY)
 
             cy += LH
@@ -991,8 +1069,8 @@ def draw_count_panel(frame: np.ndarray,
             out_s = str(lane.cross_out)
             (iw2, _), _ = cv2.getTextSize(in_s,  FONT, FS_B, 1)
             (ow2, _), _ = cv2.getTextSize(out_s, FONT, FS_B, 1)
-            _put(frame, in_s,  X+W-PAD-62-iw2, cy, FS_B, C_GREEN)
-            _put(frame, out_s, X+W-PAD-22-ow2, cy, FS_B, C_RED)
+            _put(frame, in_s,  X+W-PAD-72-iw2, cy, FS_B, C_GREEN)
+            _put(frame, out_s, X+W-PAD-26-ow2, cy, FS_B, C_RED)
             cy += LH
 
 
@@ -1162,11 +1240,11 @@ def parse_args():
     p.add_argument("--size",   type=int,   default=416, help="YOLO input size (default 416)")
     p.add_argument("--conf",   type=float, default=0.35, help="Confidence threshold")
     p.add_argument("--nms",    type=float, default=0.40, help="NMS threshold")
-    p.add_argument("--csv",          default="vehicle_counts.csv", help="CSV output path")
+    p.add_argument("--csv",          default="logs/vehicle_counts.csv", help="CSV output path")
     p.add_argument("--out",          default="", help="Save annotated video to file")
     p.add_argument("--nowin",  action="store_true", help="Headless mode")
-    p.add_argument("--stats",  default="live_stats.json",
-                   help="Write live stats JSON for dashboard (default: live_stats.json)")
+    p.add_argument("--stats",  default="logs/live_stats.json",
+                   help="Write live stats JSON for dashboard (default: logs/live_stats.json)")
     backend = p.add_mutually_exclusive_group()
     backend.add_argument("--gpu", action="store_true",
                          help="Force CUDA GPU backend (exit if GPU not available)")
@@ -1175,8 +1253,43 @@ def parse_args():
     return p.parse_args()
 
 
+# Brightness thresholds for frame-based day/night detection (0–255 mean pixel value)
+_BRIGHT_DAY   = 90   # above this → switch to day
+_BRIGHT_NIGHT = 55   # below this → switch to night
+# Clock hard limits override brightness at extreme hours
+_HOUR_DAY_START  = 9   # always day  09:00–16:00
+_HOUR_DAY_END    = 16
+_HOUR_NIGHT_END  = 5   # always night 00:00–05:00 and 21:00–24:00
+_HOUR_NIGHT_START = 21
+
+
 def is_day_time() -> bool:
-    return 6 <= datetime.now().hour < 18
+    """Coarse startup estimate — replaced by detect_day_mode() during runtime."""
+    return _HOUR_NIGHT_END <= datetime.now().hour < _HOUR_NIGHT_START
+
+
+def detect_day_mode(frame: np.ndarray, current_day: bool) -> bool:
+    """
+    Determine day/night using frame brightness with hysteresis.
+    Hard clock limits override at extreme hours to avoid false switching
+    from headlights or tunnel frames during obvious night/day periods.
+    """
+    hour = datetime.now().hour
+
+    if hour < _HOUR_NIGHT_END or hour >= _HOUR_NIGHT_START:
+        return False  # hard night — clocks dominate
+    if _HOUR_DAY_START <= hour < _HOUR_DAY_END:
+        return True   # hard day — clocks dominate
+
+    # Twilight window: measure actual frame brightness
+    gray       = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    brightness = float(np.mean(gray))
+
+    if current_day and brightness < _BRIGHT_NIGHT:
+        return False   # clearly gone dark
+    if not current_day and brightness > _BRIGHT_DAY:
+        return True    # clearly brightened
+    return current_day  # hysteresis — no change
 
 
 def make_night_path(p: str) -> str:
@@ -1380,10 +1493,10 @@ def main():
 
         frame_idx += 1
 
-        # Day/Night check (every 60s) — updates panel indicator always; also swaps darknet model if available
-        if (time.time() - last_model_check) > 60:
+        # Day/Night check (every 30s) — brightness-aware with hysteresis
+        if (time.time() - last_model_check) > 30:
             last_model_check = time.time()
-            new_day = is_day_time()
+            new_day = detect_day_mode(frame, day_mode)
             if new_day != day_mode:
                 day_mode = new_day
                 if has_night:
@@ -1525,9 +1638,11 @@ def main():
 
         # --- Key handling ---
         if not args.nowin:
-            key = cv2.waitKey(1) & 0xFF
+            raw_key = cv2.waitKey(1)
+            key     = raw_key & 0xFF
         else:
-            key = 0xFF
+            raw_key = 0xFF
+            key     = 0xFF
 
         if key in (ord('q'), ord('Q'), 27):  # Q or ESC in NONE mode
             if ui.mode == UIMode.NONE or key == ord('q') or key == ord('Q'):
@@ -1598,13 +1713,24 @@ def main():
             else:
                 print(f"[SWITCH] Preset {preset_idx+1} not defined in scene_config.json")
 
-        elif key in (81, 82, 83, 84, 0):  # Arrow keys (nudge selected ROI pt / lane)
-            if ui.mode == UIMode.EDIT_SCENE:
-                dx, dy = {81: (-1,0), 83: (1,0), 82: (0,-1), 84: (0,1)}.get(key, (0,0))
-                if 0 <= ui.selected_roi_pt < len(scene_cfg.roi_pts):
-                    p = scene_cfg.roi_pts[ui.selected_roi_pt]
-                    scene_cfg.roi_pts[ui.selected_roi_pt] = (p[0]+dx, p[1]+dy)
-                    ui.need_save = True
+        # Arrow keys: nudge selected ROI point or lane (3px per press)
+        # Handles Linux/Windows (key=81-84) and macOS (raw_key=2424832+)
+        _ARROW = {
+            81: (-3, 0), 83: (3, 0), 82: (0, -3), 84: (0, 3),          # Linux/Win
+            2424832: (-3, 0), 2555904: (3, 0), 2490368: (0, -3), 2621440: (0, 3),  # macOS
+        }
+        _adxdy = _ARROW.get(raw_key) or _ARROW.get(key)
+        if _adxdy and ui.mode == UIMode.EDIT_SCENE:
+            dx, dy = _adxdy
+            if 0 <= ui.selected_roi_pt < len(scene_cfg.roi_pts):
+                p = scene_cfg.roi_pts[ui.selected_roi_pt]
+                scene_cfg.roi_pts[ui.selected_roi_pt] = _clamp_pt((p[0]+dx, p[1]+dy), frame_w, frame_h)
+                ui.need_save = True
+            elif 0 <= ui.selected_lane < len(scene_cfg.lanes):
+                ln = scene_cfg.lanes[ui.selected_lane]
+                ln.x1, ln.y1 = _clamp_pt((ln.x1+dx, ln.y1+dy), frame_w, frame_h)
+                ln.x2, ln.y2 = _clamp_pt((ln.x2+dx, ln.y2+dy), frame_w, frame_h)
+                ui.need_save = True
 
     # Cleanup
     cap.release()

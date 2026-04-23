@@ -461,7 +461,7 @@ def build_dataset_panel() -> Panel:
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--stats",   default="live_stats.json")
+    p.add_argument("--stats",   default="logs/live_stats.json")
     p.add_argument("--config",  default="counting_app/config/scene_config.json")
     p.add_argument("--results", default="")
     return p.parse_args()

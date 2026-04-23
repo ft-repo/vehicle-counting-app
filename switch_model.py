@@ -22,7 +22,7 @@ if len(sys.argv) < 2 or sys.argv[1] not in LABELS:
     sys.exit(1)
 
 num = sys.argv[1]
-cmd_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "model_cmd.txt")
+cmd_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "model_cmd.txt")
 with open(cmd_path, "w") as f:
     f.write(num)
 

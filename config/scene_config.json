@@ -85,10 +85,10 @@
     "height": 960
   },
   "yolo": {
-    "onnx": "model_compare/yolov8n/run5/weights/best.onnx",
-    "names": "old_win_code/models/coco_drr7.names",
-    "cfg": "old_win_code/models/yolov4-tiny-drr7-day.cfg",
-    "weights": "old_win_code/models/yolov4-tiny-drr7-day.weights",
+    "onnx": "models/yolov8n.onnx",
+    "names": "models/coco_drr7.names",
+    "cfg": "models/yolov4-tiny-drr7-day.cfg",
+    "weights": "models/yolov4-tiny-drr7-day.weights",
     "input_size": 416,
     "conf": 0.2,
     "nms": 0.4
