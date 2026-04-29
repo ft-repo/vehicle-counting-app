@@ -600,6 +600,13 @@ def make_mouse_callback(ui: UIState, cfg: SceneCfg, frame_wh):
         LINE_D = ui.line_d()
 
         if event == cv2.EVENT_LBUTTONDOWN:
+            if ui.mode == UIMode.EDIT_SCENE:
+                print(f"[DBG] click screen=({x},{y})  frame=({fx},{fy})  scale=({ui.scale_x:.3f},{ui.scale_y:.3f})  hit_r={ui.hit_r()}")
+                if cfg.roi_pts:
+                    print(f"[DBG] roi_pts={cfg.roi_pts[:3]}...")
+                if cfg.lanes:
+                    l = cfg.lanes[0]
+                    print(f"[DBG] lane0 p1=({l.x1},{l.y1}) p2=({l.x2},{l.y2})")
             if ui.mode == UIMode.DRAW_ROI:
                 cfg.roi_pts.append(fp)
                 return
