@@ -1,177 +1,214 @@
-# Vehicle Counter
+# Vehicle Detection & Counting System
 
-Real-time vehicle detection and counting system for CCTV/IP camera feeds. Built with OpenCV DNN and supports YOLOv4-tiny (Darknet) and YOLOv8/YOLO11 (ONNX) models.
+Real-time vehicle detection, tracking, and lane-crossing counting for CCTV and IP camera feeds. Supports YOLOv4-tiny (Darknet), YOLOv8n, and YOLO11n (ONNX) models on **macOS, Windows, and Linux**.
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Dashboard](#dashboard)
+- [Validation](#validation)
+- [Model Hot-Swap](#model-hot-swap)
+- [File Structure](#file-structure)
+- [Outputs](#outputs)
+- [Supported Classes](#supported-classes)
 
 ---
 
 ## Features
 
-- **Detection** — YOLOv4-tiny, YOLOv8n, YOLO11n via OpenCV DNN (CPU or CUDA GPU)
-- **Tracking** — centroid-based IoU tracker with configurable lost-frame timeout
-- **Lane crossing** — directional in/out counts per lane using cross-product side test
-- **ROI masking** — polygon region of interest filters detections to road area only
-- **Day/Night switching** — auto-detects brightness and loads the correct model variant
-- **Live model swap** — press `1` / `2` / `3` or run `switch_model.py` to swap models without restart
-- **Live dashboard** — `live_stats.py` renders a rich terminal UI fed by `live_stats.json`
-- **CSV logging** — every crossing event is written to `vehicle_counts.csv`
-- **Interactive editor** — draw/edit ROI and lanes in real time without touching the JSON
+- Multi-model support — YOLOv4-tiny (Darknet), YOLOv8n, YOLO11n via OpenCV DNN
+- Centroid IoU tracker with configurable lost-frame timeout
+- Per-lane directional counting (in / out) using cross-product line test
+- Polygon ROI masking to restrict detection to the road area
+- Day/Night model auto-switching by brightness and time of day
+- Live model hot-swap without restarting the application
+- Multi-page terminal dashboard with FPS, counts, mAP, confusion matrix, and dataset progress
+- Per-crossing CSV event log
+- Interactive ROI and lane editor directly in the video window
+- Headless mode for edge/server deployment (`--nowin`)
+- Auto-validation on startup when results are missing or stale
 
 ---
 
 ## Requirements
 
-```
-Python 3.9+
-opencv-python      # cv2 with DNN module
-numpy
-rich               # for live_stats.py dashboard
-ultralytics        # for run_val.py validation only
-```
-
-Install:
-
-```bash
-pip install opencv-python numpy rich ultralytics
-```
-
-For GPU (CUDA) acceleration, build OpenCV with CUDA support or install `opencv-contrib-python` and ensure CUDA toolkit + cuDNN are installed.
+- Python 3.9+
+- OpenCV 4.8+
+- NumPy 1.24+
+- Rich 13.0+
+- Ultralytics 8.0+ *(validation only)*
 
 ---
 
-## File Structure
+## Installation
 
+### Windows
+
+```bat
+setup\install.bat
 ```
-counting_app/
-└── vehicle-counter/
-    ├── vehicle_counter.py       # Main app — detection, tracking, counting
-    ├── live_stats.py            # Terminal dashboard
-    ├── switch_model.py          # Hot-swap model from another terminal
-    ├── run_val.py               # Run validation on a dataset
-    ├── run_camera.bat           # Windows launch script
-    ├── config/
-    │   └── scene_config.json    # Camera, model, ROI, and lane configuration
-    ├── models/
-    │   ├── coco_drr7.names
-    │   ├── yolov4-tiny-drr7-day.cfg / .weights
-    │   ├── yolov4-tiny-drr7-night.cfg / .weights
-    │   ├── yolov8n.onnx
-    │   └── yolo11n.onnx
-    └── logs/
-        ├── vehicle_counts.csv   # Crossing event log (auto-created)
-        └── live_stats.json      # Live stats for dashboard (auto-created)
+
+### macOS / Linux
+
+```bash
+bash setup/install.sh
+```
+
+### Manual
+
+```bash
+pip install -r requirements.txt
+```
+
+#### GPU (CUDA) — Windows / Linux
+
+For CUDA-accelerated inference, install a CUDA-enabled OpenCV build:
+
+```bash
+# Via conda (recommended)
+conda install -c conda-forge opencv cudatoolkit
+
+# Or run the provided setup script which auto-detects your CUDA version
+setup\install.bat      # Windows
+bash setup/install.sh  # Linux
 ```
 
 ---
 
 ## Quick Start
 
-### Run on RTSP camera (from scene_config.json)
-
 ```bash
-cd vehicle-counter
-python vehicle_counter.py "rtsp://user:pass@IP/axis-media/media.amp" \
-    --onnx models/yolov8n.onnx \
-    --names models/coco_drr7.names \
-    --config config/scene_config.json
+# macOS / Linux
+python run_camera.py
+
+# Windows
+python run_camera.py
+# or double-click run_camera.bat
 ```
 
-### Run on a local video file
+`run_camera.py` reads the camera source from `config/scene_config.json`, opens the terminal dashboard in a new window, and starts the counter.
 
 ```bash
-python vehicle_counter.py my_video.mp4 \
-    --onnx models/yolov8n.onnx \
-    --names models/coco_drr7.names \
-    --config config/scene_config.json
-```
-
-### Run with YOLOv4-tiny (Darknet)
-
-```bash
-python vehicle_counter.py "rtsp://..." \
-    --cfg   models/yolov4-tiny-drr7-day.cfg \
-    --weights models/yolov4-tiny-drr7-day.weights \
-    --names models/coco_drr7.names \
-    --config config/scene_config.json
-```
-
-### Headless mode (no window, server/edge deployment)
-
-```bash
-python vehicle_counter.py "rtsp://..." --onnx best.onnx --names coco_drr7.names --nowin
+# Override source or backend at launch
+python run_camera.py --source rtsp://user:pass@192.168.1.100/axis-media/media.amp
+python run_camera.py --gpu
+python run_camera.py --cpu
+python run_camera.py --nowin   # headless
 ```
 
 ---
 
-## CLI Arguments
+## Usage
+
+`vehicle_counter.py` can also be run directly for more control:
+
+```bash
+python vehicle_counter.py <source> [options]
+```
+
+### Arguments
 
 | Argument | Default | Description |
 |---|---|---|
-| `input` | *(required)* | Video file, RTSP URL, or webcam index (e.g. `0`) |
+| `source` | *(required)* | RTSP URL, HLS URL, video file path, or webcam index |
+| `--config` | — | Path to `scene_config.json` |
+| `--onnx` | — | YOLOv8 / YOLO11 `.onnx` model file |
 | `--cfg` | — | YOLOv4 `.cfg` file |
 | `--weights` | — | YOLOv4 `.weights` file |
 | `--names` | — | Class names `.names` file |
-| `--onnx` | — | YOLOv8/YOLO11 ONNX model (replaces `--cfg`/`--weights`) |
-| `--config` | — | `scene_config.json` path |
-| `--size` | `416` | YOLO input image size |
+| `--size` | `416` | YOLO input resolution |
 | `--conf` | `0.35` | Detection confidence threshold |
 | `--nms` | `0.40` | NMS threshold |
 | `--csv` | `vehicle_counts.csv` | CSV output path |
-| `--out` | — | Save annotated video to this path |
 | `--stats` | `live_stats.json` | Live stats JSON output path |
+| `--out` | — | Save annotated video to file |
 | `--nowin` | off | Headless mode — no display window |
-| `--gpu` | off | Force CUDA GPU (exits if unavailable) |
+| `--gpu` | off | Force CUDA GPU backend |
 | `--cpu` | off | Force CPU backend |
 
----
+### Examples
 
-## Keyboard Controls
+```bash
+# ONNX model with scene config
+python vehicle_counter.py "rtsp://user:pass@192.168.1.100/axis-media/media.amp" \
+    --onnx   models/yolov8n.onnx \
+    --names  models/coco_drr7.names \
+    --config config/scene_config.json
 
-Press keys in the OpenCV window (click the window first to focus it):
+# YOLOv4-tiny (Darknet)
+python vehicle_counter.py "rtsp://..." \
+    --cfg     models/yolov4-tiny-drr7-day.cfg \
+    --weights models/yolov4-tiny-drr7-day.weights \
+    --names   models/coco_drr7.names \
+    --config  config/scene_config.json
+
+# Local video file
+python vehicle_counter.py recording.mp4 \
+    --onnx  models/yolov8n.onnx \
+    --names models/coco_drr7.names
+
+# Headless (server / edge deployment)
+python vehicle_counter.py "rtsp://..." \
+    --onnx models/yolov8n.onnx --names models/coco_drr7.names --nowin
+```
+
+### Keyboard Controls
+
+Click the video window to focus it before using shortcuts.
 
 | Key | Action |
 |---|---|
 | `E` | Toggle Edit Mode |
-| `R` | Draw new ROI (in Edit Mode) |
-| `L` | Add lane |
-| `D` | Delete selected lane (in Edit Mode) |
-| `C` | Clear ROI (in Edit Mode) |
+| `R` | Draw new ROI polygon *(Edit Mode)* |
+| `L` | Add a new lane |
+| `D` | Delete selected lane *(Edit Mode)* |
+| `C` | Clear ROI *(Edit Mode)* |
 | `S` | Save `scene_config.json` |
-| `Tab` | Cycle lane direction (both / in / out) |
+| `Tab` | Cycle lane direction |
+| `I` | Change camera source |
 | `1` / `2` / `3` | Switch model preset |
 | Arrow keys | Nudge selected ROI point or lane endpoint (3 px) |
 | `ESC` | Cancel current sub-mode |
 | `Q` | Quit |
 
 **Edit Mode workflow:**
-1. Press `E` — enters Edit Mode (teal HUD appears top-right)
-2. Click a ROI point or lane endpoint to select it
+1. Press `E` — teal HUD appears top-right
+2. Click a ROI vertex or lane endpoint to select it
 3. Drag to reposition, or use arrow keys to nudge
-4. Press `S` to save
+4. Right-click a point to delete it
+5. Press `S` to save
 
 ---
 
-## scene_config.json
+## Configuration
 
-All camera, model, ROI, and lane settings live here. Edit it manually or use the interactive UI.
+All camera, model, ROI, and lane settings are stored in `config/scene_config.json`.
+Edit manually or use the interactive UI in the video window.
 
 ```json
 {
-  "version": "1.0",
   "camera": {
-    "source": "rtsp://user:pass@IP/axis-media/media.amp",
+    "source": "https://proxy/live/10.0.0.1.stream/playlist.m3u8",
     "width": 1280,
     "height": 960
   },
   "yolo": {
-    "onnx":       "model_compare/yolov8n/run5/weights/best.onnx",
-    "names":      "old_win_code/models/coco_drr7.names",
+    "onnx":       "models/yolov8n.onnx",
+    "names":      "models/coco_drr7.names",
     "input_size": 416,
-    "conf":       0.2,
-    "nms":        0.4
+    "conf": 0.2,
+    "nms":  0.4
   },
   "roi": {
     "enabled": true,
-    "points": [[x1,y1], [x2,y2], ...]
+    "points": [[x1, y1], [x2, y2], "..."]
   },
   "lanes": [
     {
@@ -186,54 +223,120 @@ All camera, model, ROI, and lane settings live here. Edit it manually or use the
     }
   ],
   "model_presets": [
-    { "label": "YOLOv4-tiny", "cfg": "...", "weights": "...", "names": "...", "input_size": 416 },
-    { "label": "YOLOv8n",     "onnx": "...", "names": "...", "input_size": 416 },
-    { "label": "YOLO11n",     "onnx": "...", "names": "...", "input_size": 416 }
+    { "label": "YOLOv4-tiny", "cfg": "models/yolov4-tiny-drr7-day.cfg",
+      "weights": "models/yolov4-tiny-drr7-day.weights", "names": "models/coco_drr7.names" },
+    { "label": "YOLOv8n run5", "onnx": "model_compare/yolov8n/run5/weights/best.onnx",
+      "names": "models/coco_drr7.names" },
+    { "label": "YOLO11n run2", "onnx": "model_compare/yolo11n/run2/weights/best.onnx",
+      "names": "models/coco_drr7.names" }
   ]
 }
 ```
 
-`arrow_in` sets what direction is counted as **in**. Options: `top_to_bottom`, `bottom_to_top`, `left_to_right`, `right_to_left`.
+`arrow_in` — direction counted as **IN**: `top_to_bottom` · `bottom_to_top` · `left_to_right` · `right_to_left`
 
 ---
 
-## Live Dashboard
+## Dashboard
 
-In a second terminal (while the main app is running):
+The terminal dashboard launches automatically via `run_camera.py`.
+To open it manually in a separate terminal:
 
 ```bash
-cd vehicle-counter
-python live_stats.py --stats live_stats.json --config config/scene_config.json
+python live_stats.py
 ```
 
-Displays live FPS, active tracks, per-class counts, lane counts, recent events, model accuracy, and dataset progress.
+Navigate pages with number keys:
+
+| Page | Content |
+|---|---|
+| `1` | Live feed status, FPS sparkline, active tracks, per-class counts, recent crossing events, dataset progress |
+| `2` | Per-class metrics (AP50, AP50-95, Precision, Recall, F1), confusion matrix, error analysis |
+| `3` | PR curves, IoU distribution, confidence threshold analysis, inference speed benchmarks |
+| `4` | Full dataset progress with labeled counts and accuracy targets |
 
 ---
 
-## Hot-Swap Model
+## Validation
 
-Without stopping the main app:
+```bash
+# Use default model (configured in run_val.py)
+python run_val.py
+
+# Specify a model
+python run_val.py --model model_compare/yolov8n/run5/weights/best.pt \
+                  --data  new_data/dataset/data.yaml \
+                  --imgsz 416
+```
+
+Results are written to `val_results.json` and loaded automatically by the dashboard.
+
+---
+
+## Model Hot-Swap
+
+Switch the active model without restarting the application.
+
+Press `1`, `2`, or `3` in the video window, or from a separate terminal:
 
 ```bash
 python switch_model.py 1   # YOLOv4-tiny
-python switch_model.py 2   # YOLOv8n
-python switch_model.py 3   # YOLO11n
+python switch_model.py 2   # YOLOv8n run5
+python switch_model.py 3   # YOLO11n run2
 ```
 
-Or just press `1`, `2`, `3` in the OpenCV window.
+Model presets are defined in `config/scene_config.json` under `model_presets`.
 
 ---
 
-## Run Validation
+## File Structure
 
-```bash
-python run_val.py \
-    --model model_compare/yolov8n/run5/weights/best.pt \
-    --data  ../new_data/dataset/data.yaml \
-    --imgsz 416
 ```
-
-Saves `val_results.json` with per-class mAP50 scores.
+vehicle-counting-app/
+├── run_camera.py              # Cross-platform launcher
+├── run_camera.sh              # macOS / Linux shortcut
+├── run_camera.bat             # Windows shortcut
+├── vehicle_counter.py         # Core application
+├── live_stats.py              # Terminal dashboard
+├── switch_model.py            # Runtime model switcher
+├── run_val.py                 # Validation runner
+├── requirements.txt
+│
+├── config/
+│   └── scene_config.json      # Camera, model, ROI, and lane configuration
+│
+├── models/                    # Model weight files
+│   ├── coco_drr7.names
+│   ├── yolov4-tiny-drr7-day.cfg / .weights
+│   ├── yolov4-tiny-drr7-night.cfg / .weights
+│   ├── yolov8n.onnx
+│   └── yolo11n.onnx
+│
+├── setup/
+│   ├── install.bat            # Windows first-time setup
+│   ├── install.sh             # macOS / Linux first-time setup
+│   ├── setup_gpu.bat          # Windows CUDA setup
+│   └── check_gpu.py           # CUDA availability check
+│
+├── tools/
+│   ├── frame_extractor.py     # Extract frames from RTSP or video file
+│   └── gdino_ls_backend.py    # Grounding DINO — Label Studio ML backend
+│
+├── model_compare/
+│   ├── tracker.py             # Single-model training progress tracker
+│   ├── tracker_live.py        # Side-by-side training dashboard
+│   ├── auto_label.py          # Auto-label images with YOLO
+│   ├── merge_dataset.py       # Merge external dataset into train/val split
+│   └── eval_dashboard.py      # Generate evaluation comparison PNG
+│
+├── run_this/
+│   ├── extract.sh             # Pre-configured frame extractor (macOS / Linux)
+│   └── extract.bat            # Pre-configured frame extractor (Windows)
+│
+└── logs/                      # Auto-created at runtime
+    ├── vehicle_counts.csv
+    └── live_stats.json
+```
 
 ---
 
@@ -241,27 +344,27 @@ Saves `val_results.json` with per-class mAP50 scores.
 
 | File | Description |
 |---|---|
-| `vehicle_counts.csv` | One row per lane crossing: `timestamp, track_id, class, direction, lane` |
-| `live_stats.json` | Real-time JSON (updated every 1 s): FPS, counts, events, model info |
-| *(optional)* annotated video | Pass `--out output.mp4` to save annotated frames |
+| `vehicle_counts.csv` | Per-crossing log: `timestamp, track_id, class, direction, lane` |
+| `live_stats.json` | Real-time stats snapshot updated every ~1 s |
+| `val_results.json` | Validation metrics: mAP50, precision, recall, F1, confusion matrix |
+| `*(optional)*` annotated video | Use `--out output.mp4` to save an annotated recording |
 
 ---
 
 ## Supported Classes
 
-Defined in `old_win_code/models/coco_drr7.names`:
+Defined in `models/coco_drr7.names`:
 
-```
-0: person    1: car       2: bike      3: truck     4: bus
-5: taxi      6: pickup    7: trailer   8: tuktuk    9: van
-```
-
-> `van` is excluded from counting by default (`SKIP_CLASSES`). Edit the constant in `vehicle_counter.py` to change this.
+| ID | Class | ID | Class |
+|---|---|---|---|
+| 0 | person | 5 | taxi |
+| 1 | car | 6 | pickup |
+| 2 | bike | 7 | trailer |
+| 3 | truck | 8 | tuktuk |
+| 4 | bus | 9 | agri_truck |
 
 ---
 
-## Notes
+## License
 
-- The RTSP stream uses TCP transport (`?tcp` or OpenCV flag) to reduce packet loss.
-- Day/Night model auto-switch uses frame brightness with hysteresis (thresholds: 55 dark / 90 bright) and hard clock limits (09:00–16:00 always day, 00:00–05:00 always night). Only applies to Darknet models.
-- Ported from the original Windows C++ app (`old_win_code/`). Windows shared-memory IPC to a C# UI is removed; CSV + JSON replace it.
+Internal use only. Not for public distribution.
