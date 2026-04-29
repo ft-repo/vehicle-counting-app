@@ -40,10 +40,18 @@ Real-time vehicle detection, tracking, and lane-crossing counting for CCTV and I
 ## Requirements
 
 - Python 3.9+
-- OpenCV 4.8+
+- OpenCV 4.8+ — **must be `opencv-python` (not `opencv-python-headless`)**
 - NumPy 1.24+
 - Rich 13.0+
 - Ultralytics 8.0+ *(validation only)*
+
+> **Important:** The headless variant (`opencv-python-headless`) does not include GUI support and will crash on window creation. Always install `opencv-python`.
+>
+> If you see the error `The function is not implemented. Rebuild the library with Windows, GTK+ 2.x or Cocoa support`, run:
+> ```bash
+> pip uninstall opencv-python-headless opencv-python -y
+> pip install opencv-python
+> ```
 
 ---
 
