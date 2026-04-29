@@ -91,6 +91,8 @@ def main():
     p.add_argument("--gpu",   action="store_true", help="Force GPU / CUDA backend")
     p.add_argument("--cpu",   action="store_true", help="Force CPU backend")
     p.add_argument("--nowin", action="store_true", help="Headless mode (no display window)")
+    p.add_argument("--skip",  type=int, default=1,
+                   help="Process 1 out of every N frames (default 1). Use --skip 2 or --skip 3 to reduce lag on slow hardware.")
     args = p.parse_args()
 
     config_path = ROOT / args.config
@@ -134,9 +136,10 @@ def main():
         "--config", str(config_path),
         "--stats",  args.stats,
     ]
-    if args.gpu:    counter_cmd.append("--gpu")
-    if args.cpu:    counter_cmd.append("--cpu")
-    if args.nowin:  counter_cmd.append("--nowin")
+    if args.gpu:         counter_cmd.append("--gpu")
+    if args.cpu:         counter_cmd.append("--cpu")
+    if args.nowin:       counter_cmd.append("--nowin")
+    if args.skip > 1:    counter_cmd += ["--skip", str(args.skip)]
 
     try:
         subprocess.run(counter_cmd, cwd=str(ROOT))

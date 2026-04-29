@@ -137,6 +137,7 @@ python vehicle_counter.py <source> [options]
 | `--csv` | `vehicle_counts.csv` | CSV output path |
 | `--stats` | `live_stats.json` | Live stats JSON output path |
 | `--out` | — | Save annotated video to file |
+| `--skip` | `1` | Process 1 out of every N frames (e.g. `--skip 2` halves CPU load) |
 | `--nowin` | off | Headless mode — no display window |
 | `--gpu` | off | Force CUDA GPU backend |
 | `--cpu` | off | Force CPU backend |

@@ -46,6 +46,33 @@ import cv2
 import numpy as np
 
 # ============================================================
+#  Windows DPI helper
+# ============================================================
+def _win32_client_size(title: str):
+    """Return (w, h) of a named OpenCV window via Win32 GetClientRect.
+
+    Uses physical pixels regardless of DPI scaling mode — same coordinate
+    space as WM_MOUSEMOVE events — so the computed scale is always correct.
+    Returns None if the window can't be found or Win32 is unavailable.
+    """
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+        hwnd = ctypes.windll.user32.FindWindowW(None, title)
+        if not hwnd:
+            return None
+        rc = wt.RECT()
+        if ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(rc)):
+            w = rc.right  - rc.left
+            h = rc.bottom - rc.top
+            if w > 10 and h > 10:
+                return (w, h)
+    except Exception:
+        pass
+    return None
+
+
+# ============================================================
 #  Constants
 # ============================================================
 IOU_MATCH_THRESH = 0.30
@@ -500,8 +527,8 @@ class DragTarget(Enum):
     LANE_LINE = auto()
 
 
-HIT_R_SCREEN  = 22
-LINE_D_SCREEN = 12
+HIT_R_SCREEN  = 28   # screen-space hit radius for ROI/lane endpoint clicks
+LINE_D_SCREEN = 20   # screen-space hit distance for lane body dragging
 
 
 class UIState:
@@ -1347,6 +1374,8 @@ def parse_args():
     p.add_argument("--gpu",    action="store_true", help="Force GPU (CUDA) backend")
     p.add_argument("--stats",  default="live_stats.json",
                    help="Write live stats JSON for dashboard (default: live_stats.json)")
+    p.add_argument("--skip",   type=int, default=1,
+                   help="Process 1 out of every N frames (default 1 = no skip). Use 2-3 to reduce CPU load on slow hardware.")
     return p.parse_args()
 
 
@@ -1596,6 +1625,7 @@ def main():
     _reconnect_n     = 0        # consecutive failed reads; reset on success
     _cam_failed      = False    # True after giving up — stops retrying until user changes URL
     last_good_frame: Optional[np.ndarray] = None
+    _scale_synced    = False    # True once Win32 client rect confirmed on first frame
 
     while True:
         t0 = time.perf_counter()
@@ -1631,6 +1661,7 @@ def main():
                         is_stream = True
                         _reconnect_n = 0
                         _cam_failed = False
+                        _scale_synced = False
                         cap = _open_rtsp_cap(input_str)
                         ui.mode = UIMode.NONE
             elif key in (8, 127):  # Backspace / Delete
@@ -1756,7 +1787,27 @@ def main():
             _reconnect_n = 0
             last_good_frame = frame
 
+            # Drain buffered frames on live streams to stay at the live edge.
+            # Grab (decode-skip) all queued frames; keep only the last decoded one.
+            if is_stream:
+                drained = 0
+                while cap.grab():
+                    drained += 1
+                    if drained >= 8:
+                        break
+                if drained > 0:
+                    ret2, frame2 = cap.retrieve()
+                    if ret2 and frame2 is not None:
+                        frame = frame2
+                        last_good_frame = frame
+
         frame_idx += 1
+
+        # Frame-skip: process every Nth frame only (reduces CPU load on slow hardware).
+        if args.skip > 1 and frame_idx % args.skip != 0:
+            if not args.nowin:
+                cv2.imshow(WIN, frame if last_good_frame is None else last_good_frame)
+            continue
 
         # Day/Night check (every 60s) — updates panel indicator always; also swaps darknet model if available
         if (time.time() - last_model_check) > 60:
@@ -1851,18 +1902,42 @@ def main():
 
             if not args.nowin:
                 cv2.imshow(WIN, frame)
+                # On the very first rendered frame, force a Win32 scale re-sync so
+                # the initial estimate (from GetSystemMetrics) is replaced with the
+                # true client rect, which accounts for window decorations and DPI.
+                if platform.system() == "Windows" and not _scale_synced:
+                    cv2.waitKey(30)   # let the window actually paint
+                    _wcs0 = _win32_client_size(WIN)
+                    if _wcs0:
+                        sx0 = frame_w / _wcs0[0]
+                        sy0 = frame_h / _wcs0[1]
+                        if 0.05 < sx0 < 20 and 0.05 < sy0 < 20:
+                            ui.scale_x = sx0
+                            ui.scale_y = sy0
+                    _scale_synced = True
+
                 # Keep scale in sync when the user resizes the window.
-                # Sanity-check the rect: reject zeros and implausibly large values.
-                try:
-                    wr = cv2.getWindowImageRect(WIN)
-                    if wr[2] > 10 and wr[3] > 10:
-                        sx = frame_w / wr[2]
-                        sy = frame_h / wr[3]
+                # On Windows use Win32 GetClientRect (physical pixels, same space
+                # as WM_MOUSEMOVE). On macOS/Linux use getWindowImageRect.
+                if platform.system() == "Windows":
+                    _wcs = _win32_client_size(WIN)
+                    if _wcs:
+                        sx = frame_w / _wcs[0]
+                        sy = frame_h / _wcs[1]
                         if 0.05 < sx < 20 and 0.05 < sy < 20:
                             ui.scale_x = sx
                             ui.scale_y = sy
-                except Exception:
-                    pass
+                else:
+                    try:
+                        wr = cv2.getWindowImageRect(WIN)
+                        if wr[2] > 10 and wr[3] > 10:
+                            sx = frame_w / wr[2]
+                            sy = frame_h / wr[3]
+                            if 0.05 < sx < 20 and 0.05 < sy < 20:
+                                ui.scale_x = sx
+                                ui.scale_y = sy
+                    except Exception:
+                        pass
 
         # --- Auto-save ---
         if ui.need_save and scene_path:
