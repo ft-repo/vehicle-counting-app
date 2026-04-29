@@ -1787,20 +1787,6 @@ def main():
             _reconnect_n = 0
             last_good_frame = frame
 
-            # Drain buffered frames on live streams to stay at the live edge.
-            # Grab (decode-skip) all queued frames; keep only the last decoded one.
-            if is_stream:
-                drained = 0
-                while cap.grab():
-                    drained += 1
-                    if drained >= 8:
-                        break
-                if drained > 0:
-                    ret2, frame2 = cap.retrieve()
-                    if ret2 and frame2 is not None:
-                        frame = frame2
-                        last_good_frame = frame
-
         frame_idx += 1
 
         # Frame-skip: process every Nth frame only (reduces CPU load on slow hardware).
