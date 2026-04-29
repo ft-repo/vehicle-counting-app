@@ -67,7 +67,7 @@ CLASSES_STATUS = {
     "pickup":  (14620, 14620, 60, 30),
     "trailer": (690,   700,  50, 20),
     "tuktuk":  (37,    500,  30, 15),
-    "agri":    (0,     500,  30, 15),
+    "agri_truck":    (0,     500,  30, 15),
 }
 
 KNOWN_RESULTS = {
@@ -189,7 +189,7 @@ def build_feed_panel(stats: dict | None) -> Panel:
 
     if stats is None:
         g.add_row("Status", Text(f"{DOT_OFF}  Offline", style=C_BAD))
-        g.add_row("", Text("Start:  bash run_camera.sh", style=C_DIM))
+        g.add_row("", Text("Start:  python run_camera.py", style=C_DIM))
     else:
         fps   = stats.get("fps", 0)
         spark = sparkline(_fps_hist)
@@ -461,7 +461,7 @@ def build_dataset_panel() -> Panel:
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--stats",   default="logs/live_stats.json")
+    p.add_argument("--stats",   default="live_stats.json")
     p.add_argument("--config",  default="counting_app/config/scene_config.json")
     p.add_argument("--results", default="")
     return p.parse_args()

@@ -1,0 +1,43 @@
+gdino:
+  # ~ expands to your home directory (C:\Users\<name> on Windows, /home/<name> on Linux)
+  config: ~/gdino_weights/config.py
+  weights: ~/gdino_weights/weights.pth
+  box_threshold: 0.35
+  text_threshold: 0.25
+
+sam2:
+  config: sam2_hiera_s.yaml
+  weights: ~/sam2_weights/sam2_small.pt
+
+scoring:
+  auto_accept: 0.75   # combined score >= this -> accepted/
+  review:      0.45   # combined score >= this -> human_review/ (else discard)
+
+# Device: "auto" = MPS on Apple Silicon, CUDA on NVIDIA, CPU otherwise
+# Override with: "cpu", "cuda", or "mps"
+device: auto
+
+class_names:
+  0: person
+  1: car
+  2: bike
+  3: truck
+  4: bus
+  5: taxi
+  6: pickup
+  7: trailer
+  8: tuk_tuk
+  9: agri_truck
+
+# Prompts passed to Grounding DINO (dot-separated keywords per class)
+class_prompts:
+  0: "person . pedestrian"
+  1: "car . sedan . vehicle"
+  2: "motorcycle . motorbike . bicycle"
+  3: "truck . lorry . heavy vehicle"
+  4: "bus . minibus"
+  5: "taxi . cab"
+  6: "pickup truck"
+  7: "trailer . semi-trailer . articulated truck"
+  8: "tuk-tuk . three-wheel vehicle . auto-rickshaw"
+  9: "agricultural truck . farm vehicle . harvest truck"

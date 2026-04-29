@@ -11,10 +11,10 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).parent
-DEFAULT_MODEL = ROOT / "models/yolov8n.onnx"
+ROOT = Path(__file__).parent.parent
+DEFAULT_MODEL = ROOT / "runs/detect/model_compare/yolov8n/run5/weights/best.pt"
 DEFAULT_DATA  = ROOT / "new_data/dataset/data.yaml"
-OUT_PATH      = ROOT / "logs/val_results.json"
+OUT_PATH      = ROOT / "val_results.json"
 
 
 def main():

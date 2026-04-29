@@ -1,0 +1,48 @@
+# ── Model weights (too large for GitHub) ───────────────────────────────────
+*.pt
+*.pth
+*.weights
+*.tflite
+
+# ONNX files are committed (12MB, needed to run the app)
+# *.onnx — DO NOT ignore
+
+models/*.cfg
+
+# ── Training runs ───────────────────────────────────────────────────────────
+runs/
+new_data/
+dataset/
+
+# ── Data pipeline folders (images = large, gitignored) ─────────────────────
+raw_frames/
+auto_labels/
+active_learning/
+
+# Keep folder structure in git (placeholder files)
+!raw_frames/.keep
+!auto_labels/.keep
+
+# ── Runtime outputs ─────────────────────────────────────────────────────────
+vehicle_counts.csv
+live_stats.json
+logs/vehicle_counts.csv
+logs/model_cmd.txt
+
+# ── Label Studio ─────────────────────────────────────────────────────────────
+label-studio/
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.env
+.venv/
+
+# ── macOS ───────────────────────────────────────────────────────────────────
+.DS_Store
+
+# ── Temp / test files ────────────────────────────────────────────────────────
+*.tmp
+gdino_test_result.jpg
