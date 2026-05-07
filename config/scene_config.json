@@ -85,7 +85,7 @@
     "height": 960
   },
   "yolo": {
-    "onnx": "models/yolov8n.onnx",
+    "onnx": "model_compare/yolo26n/run1/weights/best.onnx",
     "names": "models/coco_drr7.names",
     "cfg": "models/yolov4-tiny-drr7-day.cfg",
     "weights": "models/yolov4-tiny-drr7-day.weights",

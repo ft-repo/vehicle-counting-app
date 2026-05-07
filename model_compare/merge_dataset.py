@@ -1,9 +1,8 @@
 """
-Merge SSD dataset into new_data/dataset/ using symlinks.
+Merge SSD per-class labeled data into new_data/dataset/ for training.
 
-Sources:
-  - /Volumes/Puen_SSD/.../class7day/All/  → classes 0-7 (20K images)
-  - new_data/dataset/images/train|val/    → existing tuktuk + multi-class images
+Source structure on SSD:
+  vehicle_dataset/labeled/<class>/images/  +  labels/
 
 Run from project root:
     python model_compare/merge_dataset.py
@@ -22,6 +21,8 @@ from pathlib import Path
 BASE    = Path(__file__).parent.parent
 DATASET = BASE / "new_data/dataset"
 
+CLASS_NAMES = ['person','car','bike','truck','bus','taxi','pickup','trailer','tuktuk','agri_truck','van']
+
 # SSD path — override with env var if your drive is mounted elsewhere:
 #   macOS  : /Volumes/Puen_SSD   (default)
 #   Linux  : export SSD_PATH=/media/$USER/Puen_SSD
@@ -32,10 +33,10 @@ _default_ssd = {
     "Windows": "D:\\Puen_SSD",
 }.get(platform.system(), "/Volumes/Puen_SSD")
 
-SSD_ROOT = Path(os.environ.get("SSD_PATH", _default_ssd))
-SSD_ALL  = SSD_ROOT / "CV/App_Yolo_Model_Training/images/class7day/All"
+SSD_ROOT    = Path(os.environ.get("SSD_PATH", _default_ssd))
+SSD_LABELED = SSD_ROOT / "vehicle_dataset/labeled"
 
-VAL_SPLIT   = 0.20   # 20% of SSD images go to val
+VAL_SPLIT   = 0.20
 RANDOM_SEED = 42
 
 
@@ -43,7 +44,7 @@ RANDOM_SEED = 42
 #  Helpers
 # ─────────────────────────────────────────
 def make_link(src: Path, dst: Path) -> None:
-    """Create symlink (macOS/Linux) or copy (Windows), skip if already exists."""
+    """Symlink on macOS/Linux, copy on Windows. Skip if already exists."""
     if dst.exists() or dst.is_symlink():
         return
     if platform.system() == "Windows":
@@ -52,20 +53,20 @@ def make_link(src: Path, dst: Path) -> None:
         os.symlink(src, dst)
 
 
-def collect_ssd_pairs(folder: Path):
-    """Return list of (image_path, label_path) from SSD flat folder."""
+def collect_pairs(cls_dir: Path):
+    """Return (image_path, label_path) pairs from labeled/<class>/images+labels/."""
     pairs = []
-    for img in folder.glob("*.jpg"):
-        lbl = img.with_suffix(".txt")
-        if lbl.exists() and img.stem != "classes":
+    img_dir = cls_dir / "images"
+    lbl_dir = cls_dir / "labels"
+    if not img_dir.exists():
+        return pairs
+    for img in img_dir.iterdir():
+        if img.suffix.lower() not in (".jpg", ".jpeg", ".png", ".bmp"):
+            continue
+        lbl = lbl_dir / (img.stem + ".txt")
+        if lbl.exists():
             pairs.append((img, lbl))
     return pairs
-
-
-def count_existing(img_dir: Path):
-    """Count real files (not symlinks) in an image directory."""
-    return sum(1 for f in img_dir.iterdir()
-               if f.is_file() and not f.is_symlink() and f.suffix in (".jpg", ".png"))
 
 
 # ─────────────────────────────────────────
@@ -76,82 +77,69 @@ def main():
     print("  MERGE DATASET")
     print("="*55)
 
-    # Check SSD is mounted
-    if not SSD_ALL.exists():
-        print(f"\n[ERROR] SSD not found: {SSD_ALL}")
+    if not SSD_LABELED.exists():
+        print(f"\n[ERROR] SSD not found: {SSD_LABELED}")
         print("        Plug in Puen_SSD and try again.")
         sys.exit(1)
 
-    # Create directory structure
     for split in ("train", "val"):
         (DATASET / "images" / split).mkdir(parents=True, exist_ok=True)
         (DATASET / "labels" / split).mkdir(parents=True, exist_ok=True)
 
-    # ── Collect SSD pairs ──
-    print(f"\nScanning SSD dataset...")
-    pairs = collect_ssd_pairs(SSD_ALL)
-    print(f"  Found: {len(pairs)} image/label pairs")
+    # ── Collect all pairs from every class folder ──
+    print(f"\nScanning SSD labeled folders...")
+    all_pairs = []
+    for cls in CLASS_NAMES:
+        cls_dir = SSD_LABELED / cls
+        pairs   = collect_pairs(cls_dir)
+        print(f"  {cls:12}: {len(pairs)}")
+        all_pairs.extend(pairs)
 
-    if not pairs:
-        print("[ERROR] No pairs found in SSD folder.")
+    print(f"\n  Total: {len(all_pairs)} image/label pairs")
+
+    if not all_pairs:
+        print("[ERROR] No pairs found.")
         sys.exit(1)
 
     # ── Shuffle and split ──
     random.seed(RANDOM_SEED)
-    random.shuffle(pairs)
-    split_idx  = int(len(pairs) * (1 - VAL_SPLIT))
-    train_pairs = pairs[:split_idx]
-    val_pairs   = pairs[split_idx:]
+    random.shuffle(all_pairs)
+    split_idx   = int(len(all_pairs) * (1 - VAL_SPLIT))
+    train_pairs = all_pairs[:split_idx]
+    val_pairs   = all_pairs[split_idx:]
     print(f"  Train: {len(train_pairs)}  Val: {len(val_pairs)}")
 
-    # ── Create symlinks (copy on Windows) ──
+    # ── Symlink into dataset/ ──
     action = "Copying files" if platform.system() == "Windows" else "Creating symlinks"
     print(f"\n{action}...")
     created = {"train": 0, "val": 0}
-
-    for split, split_pairs in [("train", train_pairs), ("val", val_pairs)]:
+    for split, pairs in [("train", train_pairs), ("val", val_pairs)]:
         img_dir = DATASET / "images" / split
         lbl_dir = DATASET / "labels" / split
-        for img_src, lbl_src in split_pairs:
+        for img_src, lbl_src in pairs:
             make_link(img_src, img_dir / img_src.name)
             make_link(lbl_src, lbl_dir / lbl_src.name)
             created[split] += 1
+    print(f"  Train: {created['train']}  Val: {created['val']}")
 
-    print(f"  Train symlinks: {created['train']}")
-    print(f"  Val   symlinks: {created['val']}")
-
-    # ── Count existing real files (our new_data images) ──
-    real_train = count_existing(DATASET / "images/train")
-    real_val   = count_existing(DATASET / "images/val")
-    print(f"\nExisting labeled images kept:")
-    print(f"  Train: {real_train}  Val: {real_val}")
-
-    # ── Update data.yaml ──
+    # ── Write data.yaml ──
     yaml_path = DATASET / "data.yaml"
-    yaml_content = f"""path: {DATASET}
+    yaml_path.write_text(f"""path: {DATASET}
 train: images/train
 val: images/val
-nc: 10
-names: ['person','car','bike','truck','bus','taxi','pickup','trailer','tuktuk','agri_truck']
-"""
-    yaml_path.write_text(yaml_content)
+nc: {len(CLASS_NAMES)}
+names: {CLASS_NAMES}
+""")
     print(f"\nUpdated: {yaml_path}")
 
     # ── Summary ──
-    total_train = sum(1 for _ in (DATASET / "images/train").iterdir()
-                      if _.suffix in (".jpg", ".png"))
-    total_val   = sum(1 for _ in (DATASET / "images/val").iterdir()
-                      if _.suffix in (".jpg", ".png"))
+    total_train = sum(1 for f in (DATASET / "images/train").iterdir() if f.suffix in (".jpg", ".png", ".jpeg"))
+    total_val   = sum(1 for f in (DATASET / "images/val").iterdir()   if f.suffix in (".jpg", ".png", ".jpeg"))
 
     print(f"\n{'='*55}")
     print(f"  DATASET READY")
     print(f"{'='*55}")
-    print(f"  Train: {total_train} images")
-    print(f"  Val:   {total_val} images")
-    print(f"  Total: {total_train + total_val} images")
-    print(f"\n  Classes 0-7: from SSD (car, bike, truck, etc.)")
-    print(f"  Class 8:     tuktuk (your labeled images)")
-    print(f"  Class 9:     agri_truck (add more labels when ready)")
+    print(f"  Train: {total_train}  Val: {total_val}  Total: {total_train + total_val}")
     print(f"\n  Next: train with")
     print(f"    ./model_compare/yolov8n/train.sh")
     print(f"    ./model_compare/yolo11n/train.sh")

@@ -15,7 +15,11 @@ scoring:
 
 # Device: "auto" = MPS on Apple Silicon, CUDA on NVIDIA, CPU otherwise
 # Override with: "cpu", "cuda", or "mps"
-device: auto
+# NOTE 2026-05-06: forced to "cpu" on the DGX Spark — PyTorch 2.11+cu128's
+# bundled nvrtc doesn't support Blackwell sm_121 yet, JIT-compile of reduction
+# kernels fails. Switch back to "auto" once a Blackwell-ready nightly torch is
+# installed.
+device: cpu
 
 class_names:
   0: person
@@ -26,18 +30,27 @@ class_names:
   5: taxi
   6: pickup
   7: trailer
-  8: tuk_tuk
+  8: tuktuk
   9: agri_truck
+  10: van
 
-# Prompts passed to Grounding DINO (dot-separated keywords per class)
+# Prompts passed to Grounding DINO (dot-separated keywords per class).
+# Rules of thumb (from 2026-05-06 tuning):
+#   - Avoid generic terms like "vehicle", "object", "thing" — they over-trigger.
+#   - Avoid stop-word-y nouns like "street", "road" inside multi-word phrases —
+#     DINO sometimes returns just "street" as a match, and the phrase_map then
+#     yields a wrong label.
+#   - Keep each phrase distinctive enough that DINO's grounding picks the right
+#     class. One specific term beats five generic ones.
 class_prompts:
-  0: "person . pedestrian"
-  1: "car . sedan . vehicle"
-  2: "motorcycle . motorbike . bicycle"
-  3: "truck . lorry . heavy vehicle"
-  4: "bus . minibus"
-  5: "taxi . cab"
-  6: "pickup truck"
-  7: "trailer . semi-trailer . articulated truck"
-  8: "tuk-tuk . three-wheel vehicle . auto-rickshaw"
-  9: "agricultural truck . farm vehicle . harvest truck"
+  0: "person walking . person sitting . pedestrian"
+  1: "car . sedan . hatchback"
+  2: "motorcycle . motorbike . scooter . bicycle"
+  3: "truck . lorry . cargo truck"
+  4: "bus . coach . minibus"
+  5: "taxi . taxicab . cab"
+  6: "pickup truck . pickup"
+  7: "trailer . semi-trailer . cargo trailer"
+  8: "tuk-tuk . tuktuk . three-wheeler . auto-rickshaw"
+  9: "tractor . combine harvester . hay wagon"
+  10: "van . minivan . cargo van"

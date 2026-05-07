@@ -91,9 +91,9 @@ CLASS_COLORS = [
     ( 51, 102, 255),  # taxi
     (153, 255,  51),  # pickup
     (255, 153, 204),  # trailer
-    (153, 204, 255),
-    (255, 255,  51),
-    (204, 255, 153),
+    (153, 204, 255),  # tuktuk
+    (255, 255,  51),  # agri_truck
+    (204, 255, 153),  # van
     ( 51, 255, 255),
     (255,  51, 204),
 ]
@@ -361,7 +361,7 @@ class YoloDetector:
         self.conf_thresh = 0.35
         self.nms_thresh  = 0.40
         self.net_size    = 416
-        self.model_type  = 'darknet'   # 'darknet' or 'yolov8'
+        self.model_type  = 'darknet'   # 'darknet' (yolov4-tiny) or 'yolov8' (covers v8/11/26 ONNX exports)
 
     def load(self, cfg_file: str = '', weights_file: str = '', names_file: str = '',
              use_gpu: bool = False, onnx_file: str = '', force_gpu: bool = False) -> bool:
@@ -1245,7 +1245,7 @@ def _derive_model_name(onnx_file: str, cfg_file: str) -> str:
     if onnx_file:
         import re as _re
         p = onnx_file.replace("\\", "/").lower()
-        for arch in ("yolov8n", "yolov8s", "yolo11n", "yolo11s"):
+        for arch in ("yolo26n", "yolo26s", "yolov8n", "yolov8s", "yolo11n", "yolo11s"):
             if arch in p:
                 run_m = _re.search(r'/(run\d+)/', p)
                 run   = run_m.group(1) if run_m else ""

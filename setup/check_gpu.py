@@ -62,7 +62,10 @@ log("\n  Running inference probe...")
 try:
     import numpy as np
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    onnx_path = os.path.join(root, "models", "yolov8n.onnx")
+    # Try YOLO26n first (primary), fall back to legacy v8n if not yet trained
+    onnx_path = os.path.join(root, "model_compare", "yolo26n", "run1", "weights", "best.onnx")
+    if not os.path.exists(onnx_path):
+        onnx_path = os.path.join(root, "models", "yolov8n.onnx")
 
     if os.path.exists(onnx_path):
         net = cv2.dnn.readNetFromONNX(onnx_path)
@@ -72,9 +75,9 @@ try:
         blob  = cv2.dnn.blobFromImage(dummy, 1/255.0, (416, 416), swapRB=True, crop=False)
         net.setInput(blob)
         net.forward(net.getUnconnectedOutLayersNames())
-        log("  [OK] Inference probe passed.")
+        log(f"  [OK] Inference probe passed using {os.path.relpath(onnx_path, root)}.")
     else:
-        log("  [SKIP] models/yolov8n.onnx not found — skipping inference probe.")
+        log("  [SKIP] No ONNX model found (expected yolo26n or yolov8n) — skipping inference probe.")
 except Exception as e:
     if not quiet:
         print(f"  [FAIL] Inference probe failed: {e}")

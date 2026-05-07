@@ -1,6 +1,6 @@
 # Vehicle Detection & Counting System
 
-Real-time vehicle detection, tracking, and lane-crossing counting for CCTV and IP camera feeds. Supports YOLOv4-tiny (Darknet), YOLOv8n, and YOLO11n (ONNX) models on **macOS, Windows, and Linux**.
+Real-time vehicle detection, tracking, and lane-crossing counting for CCTV and IP camera feeds. Primary model is **YOLO26n** (NMS-free, 43 % faster on CPU than v8n, edge-optimised for Axis ACAP cameras); YOLOv4-tiny (Darknet), YOLOv8n, and YOLO11n (ONNX) are kept as legacy / bench presets. Runs on **macOS, Windows, and Linux**.
 
 ---
 
@@ -23,7 +23,7 @@ Real-time vehicle detection, tracking, and lane-crossing counting for CCTV and I
 
 ## Features
 
-- Multi-model support — YOLOv4-tiny (Darknet), YOLOv8n, YOLO11n via OpenCV DNN
+- Multi-model support — **YOLO26n** (primary, NMS-free), YOLOv4-tiny (Darknet), YOLOv8n, YOLO11n via OpenCV DNN
 - Centroid IoU tracker with configurable lost-frame timeout
 - Per-lane directional counting (in / out) using cross-product line test
 - Polygon ROI masking to restrict detection to the road area
@@ -127,7 +127,7 @@ python vehicle_counter.py <source> [options]
 |---|---|---|
 | `source` | *(required)* | RTSP URL, HLS URL, video file path, or webcam index |
 | `--config` | — | Path to `scene_config.json` |
-| `--onnx` | — | YOLOv8 / YOLO11 `.onnx` model file |
+| `--onnx` | — | YOLO26 / YOLOv8 / YOLO11 `.onnx` model file |
 | `--cfg` | — | YOLOv4 `.cfg` file |
 | `--weights` | — | YOLOv4 `.weights` file |
 | `--names` | — | Class names `.names` file |
@@ -145,13 +145,13 @@ python vehicle_counter.py <source> [options]
 ### Examples
 
 ```bash
-# ONNX model with scene config
+# YOLO26n (primary) with scene config
 python vehicle_counter.py "rtsp://user:pass@192.168.1.100/axis-media/media.amp" \
-    --onnx   models/yolov8n.onnx \
+    --onnx   model_compare/yolo26n/run1/weights/best.onnx \
     --names  models/coco_drr7.names \
     --config config/scene_config.json
 
-# YOLOv4-tiny (Darknet)
+# YOLOv4-tiny (Darknet, fallback)
 python vehicle_counter.py "rtsp://..." \
     --cfg     models/yolov4-tiny-drr7-day.cfg \
     --weights models/yolov4-tiny-drr7-day.weights \
@@ -160,12 +160,12 @@ python vehicle_counter.py "rtsp://..." \
 
 # Local video file
 python vehicle_counter.py recording.mp4 \
-    --onnx  models/yolov8n.onnx \
+    --onnx  model_compare/yolo26n/run1/weights/best.onnx \
     --names models/coco_drr7.names
 
 # Headless (server / edge deployment)
 python vehicle_counter.py "rtsp://..." \
-    --onnx models/yolov8n.onnx --names models/coco_drr7.names --nowin
+    --onnx model_compare/yolo26n/run1/weights/best.onnx --names models/coco_drr7.names --nowin
 ```
 
 ### Keyboard Controls
@@ -209,7 +209,7 @@ Edit manually or use the interactive UI in the video window.
     "height": 960
   },
   "yolo": {
-    "onnx":       "models/yolov8n.onnx",
+    "onnx":       "model_compare/yolo26n/run1/weights/best.onnx",
     "names":      "models/coco_drr7.names",
     "input_size": 416,
     "conf": 0.2,
@@ -234,6 +234,8 @@ Edit manually or use the interactive UI in the video window.
   "model_presets": [
     { "label": "YOLOv4-tiny", "cfg": "models/yolov4-tiny-drr7-day.cfg",
       "weights": "models/yolov4-tiny-drr7-day.weights", "names": "models/coco_drr7.names" },
+    { "label": "YOLO26n run1", "onnx": "model_compare/yolo26n/run1/weights/best.onnx",
+      "names": "models/coco_drr7.names" },
     { "label": "YOLOv8n run5", "onnx": "model_compare/yolov8n/run5/weights/best.onnx",
       "names": "models/coco_drr7.names" },
     { "label": "YOLO11n run2", "onnx": "model_compare/yolo11n/run2/weights/best.onnx",
@@ -273,7 +275,7 @@ Navigate pages with number keys:
 python run_val.py
 
 # Specify a model
-python run_val.py --model model_compare/yolov8n/run5/weights/best.pt \
+python run_val.py --model model_compare/yolo26n/run1/weights/best.pt \
                   --data  new_data/dataset/data.yaml \
                   --imgsz 416
 ```
@@ -286,12 +288,13 @@ Results are written to `val_results.json` and loaded automatically by the dashbo
 
 Switch the active model without restarting the application.
 
-Press `1`, `2`, or `3` in the video window, or from a separate terminal:
+Press `1`, `2`, `3`, or `4` in the video window, or from a separate terminal:
 
 ```bash
 python switch_model.py 1   # YOLOv4-tiny
-python switch_model.py 2   # YOLOv8n run5
-python switch_model.py 3   # YOLO11n run2
+python switch_model.py 2   # YOLO26n run1   (primary, NMS-free)
+python switch_model.py 3   # YOLOv8n run5   (legacy / bench)
+python switch_model.py 4   # YOLO11n run2   (legacy / bench)
 ```
 
 Model presets are defined in `config/scene_config.json` under `model_presets`.
@@ -318,8 +321,13 @@ vehicle-counting-app/
 │   ├── coco_drr7.names
 │   ├── yolov4-tiny-drr7-day.cfg / .weights
 │   ├── yolov4-tiny-drr7-night.cfg / .weights
-│   ├── yolov8n.onnx
-│   └── yolo11n.onnx
+│   ├── yolov8n.onnx           # legacy / bench
+│   └── yolo11n.onnx           # legacy / bench
+│
+├── model_compare/             # Per-architecture training runs
+│   ├── yolo26n/run1/weights/best.{pt,onnx}   # primary (post-training export)
+│   ├── yolov8n/run5/weights/best.{pt,onnx}   # legacy
+│   └── yolo11n/run2/weights/best.{pt,onnx}   # legacy
 │
 ├── setup/
 │   ├── install.bat            # Windows first-time setup
@@ -329,7 +337,9 @@ vehicle-counting-app/
 │
 ├── tools/
 │   ├── frame_extractor.py     # Extract frames from RTSP or video file
-│   └── gdino_ls_backend.py    # Grounding DINO — Label Studio ML backend
+│   ├── gdino_ls_backend.py    # Grounding DINO — Label Studio ML backend
+│   ├── rename_dataset.py      # Normalise SSD filenames to safe ASCII pattern
+│   └── export_dataset.py      # Build transfer-ready dataset copy (real files, no symlinks)
 │
 ├── model_compare/
 │   ├── tracker.py             # Single-model training progress tracker
@@ -371,6 +381,7 @@ Defined in `models/coco_drr7.names`:
 | 2 | bike | 7 | trailer |
 | 3 | truck | 8 | tuktuk |
 | 4 | bus | 9 | agri_truck |
+| | | 10 | van |
 
 ---
 

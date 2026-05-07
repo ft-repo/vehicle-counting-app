@@ -121,8 +121,9 @@ def main():
     print()
     print("  Model switcher (open a NEW terminal):")
     print("    python switch_model.py 1   (YOLOv4-tiny)")
-    print("    python switch_model.py 2   (YOLOv8n run5)")
-    print("    python switch_model.py 3   (YOLO11n run2)")
+    print("    python switch_model.py 2   (YOLO26n run1   — primary)")
+    print("    python switch_model.py 3   (YOLOv8n run5   — legacy/bench)")
+    print("    python switch_model.py 4   (YOLO11n run2   — legacy/bench)")
     print()
 
     # Open HUD in a new window

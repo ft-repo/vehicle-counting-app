@@ -26,8 +26,9 @@ LABEL STUDIO PROJECT CONFIG (copy-paste into Settings → Labeling Interface):
         <Label value="taxi"/>
         <Label value="pickup"/>
         <Label value="trailer"/>
-        <Label value="tuk_tuk"/>
+        <Label value="tuktuk"/>
         <Label value="agri_truck"/>
+        <Label value="van"/>
       </RectangleLabels>
     </View>
 """
@@ -52,7 +53,7 @@ def _build_phrase_map(class_prompts: dict) -> dict:
     class_names = {
         0: "person", 1: "car",    2: "bike",      3: "truck",
         4: "bus",    5: "taxi",   6: "pickup",    7: "trailer",
-        8: "tuk_tuk", 9: "agri_truck",
+        8: "tuktuk", 9: "agri_truck", 10: "van",
     }
     for class_id, prompt in class_prompts.items():
         label = class_names.get(int(class_id), f"class_{class_id}")
@@ -67,13 +68,14 @@ def _resolve_image_path(url: str, hostname: str = "", token: str = "") -> str:
 
     Handles:
       /data/local-files/?d=%2Fabsolute%2Fpath.jpg  →  /absolute/path.jpg
-      /data/upload/1/img.jpg                        →  fetch via Label Studio API
+      /data/upload/<pid>/img.jpg                   →  $LS_MEDIA_ROOT/upload/<pid>/img.jpg (filesystem)
+                                                      or HTTP-fetch via LS API as fallback
       /absolute/path.jpg                            →  as-is
     """
     if not url:
         return ""
 
-    # Local files storage (most common for our setup)
+    # Local files storage
     if "local-files" in url and "d=" in url:
         encoded = url.split("d=")[-1].split("&")[0]
         return unquote(encoded)
@@ -82,22 +84,35 @@ def _resolve_image_path(url: str, hostname: str = "", token: str = "") -> str:
     if url.startswith("/") and not url.startswith("/data/"):
         return url
 
-    # Uploaded file — construct full URL and let get_local_path handle it
-    # (requires hostname + token to be set on the backend)
-    if url.startswith("/data/upload/") and hostname:
-        full_url = hostname.rstrip("/") + url
-        try:
-            import requests
-            headers = {"Authorization": f"Token {token}"} if token else {}
-            r = requests.get(full_url, headers=headers, timeout=10)
-            if r.status_code == 200:
-                import tempfile
-                tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-                tmp.write(r.content)
-                tmp.close()
-                return tmp.name
-        except Exception:
-            pass
+    # Uploaded file — try direct filesystem first if LS_MEDIA_ROOT is set
+    # (works when the ML backend runs on the same host as LS).
+    # Default points at the standard LS data dir on this DGX install.
+    if url.startswith("/data/upload/"):
+        media_root = os.environ.get(
+            "LS_MEDIA_ROOT",
+            "/home/admin/label-studio-data/media",
+        )
+        relative = url.split("/data/", 1)[1]   # "upload/2/<UUID>.jpg"
+        candidate = os.path.join(media_root, relative)
+        if os.path.exists(candidate):
+            # resolve symlinks so downstream `os.path.exists` is happy
+            return os.path.realpath(candidate)
+
+        # Fallback: HTTP-fetch via LS API (works for remote LS server)
+        if hostname:
+            full_url = hostname.rstrip("/") + url
+            try:
+                import requests
+                headers = {"Authorization": f"Token {token}"} if token else {}
+                r = requests.get(full_url, headers=headers, timeout=10)
+                if r.status_code == 200:
+                    import tempfile
+                    tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                    tmp.write(r.content)
+                    tmp.close()
+                    return tmp.name
+            except Exception:
+                pass
 
     return url
 
@@ -173,6 +188,46 @@ class GDINOBackend(LabelStudioMLBase):
 
         return results
 
+    @staticmethod
+    def _nms(anns: list, iou_thresh: float = 0.5) -> list:
+        """Greedy NMS over overlapping LS-format boxes — keep highest score."""
+        def iou(a, b):
+            ax1, ay1 = a["value"]["x"], a["value"]["y"]
+            ax2, ay2 = ax1 + a["value"]["width"], ay1 + a["value"]["height"]
+            bx1, by1 = b["value"]["x"], b["value"]["y"]
+            bx2, by2 = bx1 + b["value"]["width"], by1 + b["value"]["height"]
+            ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+            ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+            if ix2 <= ix1 or iy2 <= iy1:
+                return 0.0
+            inter = (ix2 - ix1) * (iy2 - iy1)
+            return inter / ((ax2-ax1)*(ay2-ay1) + (bx2-bx1)*(by2-by1) - inter)
+
+        sorted_anns = sorted(anns, key=lambda a: -a["score"])
+        kept = []
+        while sorted_anns:
+            best = sorted_anns.pop(0)
+            kept.append(best)
+            sorted_anns = [a for a in sorted_anns if iou(best, a) < iou_thresh]
+        return kept
+
+    @classmethod
+    def _nms_per_class(cls, anns: list, iou_thresh: float = 0.5) -> list:
+        """NMS applied within each class only.
+
+        Keeps both candidates when DINO returns the same area as two different
+        classes (e.g. tuktuk + truck on the same vehicle) — let the human picker
+        choose. Within one class, dedupes overlapping boxes by score.
+        """
+        by_class: dict[str, list] = {}
+        for a in anns:
+            label = a["value"]["rectanglelabels"][0]
+            by_class.setdefault(label, []).append(a)
+        kept: list = []
+        for group in by_class.values():
+            kept.extend(cls._nms(group, iou_thresh))
+        return kept
+
     def _run_dino(self, img_path: str) -> list:
         from groundingdino.util.inference import load_image, predict as gdino_predict
 
@@ -202,6 +257,10 @@ class GDINOBackend(LabelStudioMLBase):
                 continue
 
             label = self._phrase_to_label(phrase)
+            if label is None:
+                # DINO returned a phrase we can't map to one of our classes.
+                # Drop it rather than emit a junk label.
+                continue
 
             annotations.append({
                 "from_name": "label",
@@ -218,16 +277,52 @@ class GDINOBackend(LabelStudioMLBase):
                 "score": round(float(conf), 3),
             })
 
-        return annotations
+        # Class-aware NMS: dedupe within each class but keep cross-class
+        # overlaps (so a single tuktuk that DINO also matches as "truck" still
+        # surfaces both candidates for human review).
+        return self._nms_per_class(annotations, iou_thresh=0.5)
 
-    def _phrase_to_label(self, phrase: str) -> str:
-        """Map DINO's returned phrase to our class name."""
-        p = phrase.lower().strip()
+    def _phrase_to_label(self, phrase: str) -> str | None:
+        """Map DINO's returned phrase to our class name.
+
+        Returns None when no match — caller should drop the box rather than
+        emit a fake class. Handles three quirks:
+          1. DINO returns multi-word fragments like "person person" or "tuk tuk".
+          2. Dash/space variants ("tuk-tuk" vs "tuk tuk").
+          3. Single-word matches when DINO only echoes one token of a multi-word
+             keyword (e.g. "rickshaw" alone).
+        """
+        def norm(s: str) -> str:
+            return s.lower().replace("-", " ").replace("_", " ").strip()
+
+        p_norm   = norm(phrase)
+        p_compact = p_norm.replace(" ", "")
+        p_words  = set(p_norm.split())
+
+        # Pass 1 — exact / substring match after normalisation
         for keyword, label in self.phrase_map.items():
-            if keyword in p:
+            kw_norm = norm(keyword)
+            kw_compact = kw_norm.replace(" ", "")
+            if kw_norm and (kw_norm in p_norm or p_norm in kw_norm or kw_compact == p_compact):
                 return label
-        # Fallback: clean up the phrase itself
-        return p.replace(" ", "_").replace("-", "_")
+
+        # Pass 2 — every word of the keyword appears somewhere in the phrase
+        for keyword, label in self.phrase_map.items():
+            kw_words = set(norm(keyword).split())
+            if kw_words and kw_words.issubset(p_words):
+                return label
+
+        # Pass 3 — any single distinctive word of the phrase matches a keyword
+        # (only for words >=4 chars to avoid spurious matches on "a"/"the"/etc.)
+        for word in p_words:
+            if len(word) < 4:
+                continue
+            for keyword, label in self.phrase_map.items():
+                if word in norm(keyword).split():
+                    return label
+
+        # No match — signal caller to drop the box.
+        return None
 
     def fit(self, tasks, workdir=None, **kwargs):
         # Training is handled externally (run_val.py → yolo train)

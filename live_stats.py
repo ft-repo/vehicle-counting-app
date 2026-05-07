@@ -68,9 +68,14 @@ CLASSES_STATUS = {
     "trailer": (690,   700,  50, 20),
     "tuktuk":  (37,    500,  30, 15),
     "agri_truck":    (0,     500,  30, 15),
+    "van":           (0,     500,  30, 15),
 }
 
 KNOWN_RESULTS = {
+    # Primary — YOLO26n (NMS-free, edge-optimised). Trained on the DGX from 2026-05-08.
+    "yolo26n run1":  ROOT / "runs/yolo26n/run1/results.csv",
+    "yolo26n run2":  ROOT / "runs/yolo26n/run2/results.csv",
+    # Legacy / bench
     "yolov8n run5":  ROOT / "runs/detect/model_compare/yolov8n/run5/results.csv",
     "yolov8n run6":  ROOT / "runs/detect/model_compare/yolov8n/run6/results.csv",
     "yolo11n run2":  ROOT / "runs/detect/model_compare/yolo11n/run2/results.csv",
@@ -153,7 +158,8 @@ def find_results(model: str) -> Path | None:
 
 def model_from_onnx(onnx: str) -> str:
     p = onnx.replace("\\", "/").lower()
-    for arch in ("yolov8n", "yolov8s", "yolo11n", "yolo11s"):
+    # YOLO26n is the primary; v8 / 11 kept for legacy comparison
+    for arch in ("yolo26n", "yolo26s", "yolov8n", "yolov8s", "yolo11n", "yolo11s"):
         if arch in p:
             m = re.search(r'/(run\d+)/', p)
             return f"{arch} {m.group(1)}" if m else arch
@@ -264,8 +270,9 @@ def build_accuracy_panel(label: str, rcsv: Path | None) -> Panel:
 def build_comparison_panel(active_label: str) -> Panel:
     PRESETS = [
         ("1", "yolov4-tiny",  KNOWN_RESULTS.get("yolov4-tiny")),
-        ("2", "yolov8n run5", KNOWN_RESULTS.get("yolov8n run5")),
-        ("3", "yolo11n run2", KNOWN_RESULTS.get("yolo11n run2")),
+        ("2", "yolo26n run1", KNOWN_RESULTS.get("yolo26n run1")),
+        ("3", "yolov8n run5", KNOWN_RESULTS.get("yolov8n run5")),
+        ("4", "yolo11n run2", KNOWN_RESULTS.get("yolo11n run2")),
     ]
 
     t = Table(box=None, show_header=True, header_style=C_DIM,
@@ -479,7 +486,7 @@ def resolve_model(args, live_model: str | None) -> tuple[str, Path | None]:
             if onnx: label = model_from_onnx(onnx)
         except Exception:
             pass
-    label = label or "yolov8n run5"
+    label = label or "yolo26n run1"
     return label, find_results(label)
 
 
@@ -497,7 +504,7 @@ def main():
     console.print()
     time.sleep(0.5)
 
-    last_label = "yolov8n run5"
+    last_label = "yolo26n run1"
     last_rcsv: Path | None = None
 
     with Live(console=console, refresh_per_second=2) as live:

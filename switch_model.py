@@ -3,20 +3,22 @@ Switch the active model while vehicle_counter.py is running.
 
 Usage (run in any terminal from Label Test folder):
     python counting_app/switch_model.py 1   → YOLOv4-tiny
-    python counting_app/switch_model.py 2   → YOLOv8n run5
-    python counting_app/switch_model.py 3   → YOLO11n run2
+    python counting_app/switch_model.py 2   → YOLO26n run1   (primary, NMS-free)
+    python counting_app/switch_model.py 3   → YOLOv8n run5   (legacy / bench)
+    python counting_app/switch_model.py 4   → YOLO11n run2   (legacy / bench)
 """
 import sys
 import os
 
 LABELS = {
     "1": "YOLOv4-tiny",
-    "2": "YOLOv8n run5",
-    "3": "YOLO11n run2",
+    "2": "YOLO26n run1",
+    "3": "YOLOv8n run5",
+    "4": "YOLO11n run2",
 }
 
 if len(sys.argv) < 2 or sys.argv[1] not in LABELS:
-    print("Usage: python counting_app/switch_model.py 1|2|3")
+    print("Usage: python counting_app/switch_model.py 1|2|3|4")
     for k, v in LABELS.items():
         print(f"  {k} = {v}")
     sys.exit(1)

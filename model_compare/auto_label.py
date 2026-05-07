@@ -1,7 +1,8 @@
 """
 Auto-Label Tool
-Runs YOLOv8n on a folder of unlabeled images and writes YOLO-format .txt labels.
-Interns must review every label before using in training.
+Runs YOLO26n (primary) or any specified YOLO model on a folder of unlabeled
+images and writes YOLO-format .txt labels. Interns must review every label
+before using in training.
 
 Run:
     python model_compare/auto_label.py --images path/to/images [--conf 0.40]
@@ -27,16 +28,16 @@ from rich import box
 # ─────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────
-DEFAULT_MODEL = "runs/detect/model_compare/yolov8n/run5/weights/best.pt"
+DEFAULT_MODEL = "runs/yolo26n/run1/weights/best.pt"
 DEFAULT_CONF  = 0.40   # discard detections below this
-CLASS_NAMES   = ['person','car','bike','truck','bus','taxi','pickup','trailer','tuktuk','van','agri_truck']
+CLASS_NAMES   = ['person','car','bike','truck','bus','taxi','pickup','trailer','tuktuk','agri_truck','van']
 IMG_EXTS      = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 console = Console()
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Auto-label images with YOLOv8n")
+    p = argparse.ArgumentParser(description="Auto-label images with the trained YOLO26n model")
     p.add_argument("--images", required=True,
                    help="Folder of unlabeled images")
     p.add_argument("--model",  default=DEFAULT_MODEL,
