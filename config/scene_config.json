@@ -36,8 +36,8 @@
       "enabled": true,
       "color": "#FF8800",
       "line": {
-        "x1": 923,
-        "y1": 743,
+        "x1": 859,
+        "y1": 715,
         "x2": 575,
         "y2": 745
       },
@@ -95,7 +95,7 @@
   },
   "active_learning": {
     "enabled": true,
-    "hot_dir": "~/al_hot",
+    "hot_dir": "~/auto_capture",
     "confidence_threshold": 0.6,
     "cooldown_s": 5.0,
     "max_per_hour": 200,
