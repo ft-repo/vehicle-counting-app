@@ -48,13 +48,21 @@ CONFIG_PATH = ROOT / "configs" / "pipeline_config.yaml"
 # ── keyword → class label ───────────────────────────────────────────────────
 # Built once from config. Maps DINO's returned phrases to your class names.
 # e.g. "tuk-tuk" → "tuk_tuk", "pedestrian" → "person"
-def _build_phrase_map(class_prompts: dict) -> dict:
-    phrase_map = {}
-    class_names = {
-        0: "person", 1: "car",    2: "bike",      3: "truck",
-        4: "bus",    5: "taxi",   6: "pickup",    7: "trailer",
-        8: "tuktuk", 9: "agri_truck", 10: "van",
-    }
+def _build_phrase_map(class_prompts: dict, class_names: dict | None = None) -> dict:
+    """Build a phrase → class-name lookup.
+
+    `class_names` is the YAML-driven id → name mapping (post-2026-05-08 it's
+    12-class traffic12 order). If omitted, falls back to the legacy 11-class
+    hardcoded mapping for backward compatibility — but new deployments should
+    always pass it explicitly.
+    """
+    phrase_map: dict[str, str] = {}
+    if not class_names:
+        class_names = {
+            0: "person", 1: "car",    2: "bike",      3: "truck",
+            4: "bus",    5: "taxi",   6: "pickup",    7: "trailer",
+            8: "tuktuk", 9: "agri_truck", 10: "van",
+        }
     for class_id, prompt in class_prompts.items():
         label = class_names.get(int(class_id), f"class_{class_id}")
         for keyword in prompt.split(" . "):
@@ -156,12 +164,38 @@ class GDINOBackend(LabelStudioMLBase):
         self.box_threshold  = cfg["gdino"]["box_threshold"]
         self.text_threshold = cfg["gdino"]["text_threshold"]
 
-        # ── Build combined prompt (all 10 classes in one DINO call) ─────────
+        # ── Build combined prompt (all classes in one DINO call) ────────────
         class_prompts = {int(k): v for k, v in cfg["class_prompts"].items()}
+        self.class_names = {int(k): v for k, v in cfg.get("class_names", {}).items()}
+        self.name_to_id  = {v: k for k, v in self.class_names.items()}
         self.prompt = " . ".join(class_prompts.values())
-        self.phrase_map = _build_phrase_map(class_prompts)
+        self.phrase_map = _build_phrase_map(class_prompts, self.class_names)
 
-        print(f"[GDINO] Ready — {len(class_prompts)} classes")
+        # ── Optional SAM2 chain (off by default; flip cfg.sam2.enabled to turn on) ─
+        self.sam2 = None
+        self.levels: dict[int, str] = {}
+        sam2_cfg = cfg.get("sam2") or {}
+        if sam2_cfg.get("enabled", False):
+            try:
+                from tools.sam2_refine import SAM2Refiner
+                from tools.level_gate import load_per_class_levels
+                weights = str(Path(sam2_cfg["weights"]).expanduser())
+                sam2_dev = sam2_cfg.get("device", "cpu")
+                self.sam2 = SAM2Refiner(sam2_cfg["config"], weights, device=sam2_dev)
+                lg = cfg.get("level_gate") or {}
+                self.levels = load_per_class_levels(
+                    str(Path(lg.get("source", "")).expanduser()),
+                    threshold=float(lg.get("level2_min_map50", 0.50)),
+                )
+                self.scoring = cfg.get("scoring") or {}
+                self.review_thr = float(self.scoring.get("review", 0.45))
+                print(f"[SAM2] enabled — device={sam2_dev}  level2 classes={sorted(c for c, l in self.levels.items() if l == 'level2')}")
+            except (ImportError, FileNotFoundError, KeyError) as e:
+                print(f"[SAM2] disabled — {e!r}")
+                self.sam2 = None
+                self.levels = {}
+
+        print(f"[GDINO] Ready — {len(class_prompts)} classes  sam2={self.sam2 is not None}")
         print(f"[GDINO] Prompt: {self.prompt[:80]}...")
 
     # ── Main prediction method called by Label Studio ────────────────────────
@@ -228,6 +262,13 @@ class GDINOBackend(LabelStudioMLBase):
             kept.extend(cls._nms(group, iou_thresh))
         return kept
 
+    @staticmethod
+    def _combined_score(dino: float, fill: float, w_dino: float = 0.6, w_sam: float = 0.4) -> float:
+        """Same `0.6·DINO + 0.4·SAM2_fill` formula as tools/sam2_refine.combined_score.
+        Inlined to keep this file standalone (deployable at /home/admin/gdino_backend/
+        without needing the tools/ package on sys.path)."""
+        return max(0.0, min(1.0, w_dino * float(dino) + w_sam * float(fill)))
+
     def _run_dino(self, img_path: str) -> list:
         from groundingdino.util.inference import load_image, predict as gdino_predict
 
@@ -241,6 +282,12 @@ class GDINOBackend(LabelStudioMLBase):
             text_threshold = self.text_threshold,
             device         = self.device,
         )
+
+        # Pre-load image into SAM2 once per frame so multiple boxes share the encoding cost.
+        if self.sam2 is not None:
+            self.sam2.reset()
+            self.sam2.set_image(image_source)
+        H, W = image_source.shape[:2]
 
         annotations = []
         for box, conf, phrase in zip(boxes.tolist(), logits.tolist(), phrases):
@@ -262,6 +309,25 @@ class GDINOBackend(LabelStudioMLBase):
                 # Drop it rather than emit a junk label.
                 continue
 
+            score = round(float(conf), 3)
+
+            # SAM2 refinement on Level-2+ classes only.
+            if self.sam2 is not None:
+                cls_id = self.name_to_id.get(label)
+                if cls_id is not None and self.levels.get(cls_id) == "level2":
+                    px1 = int(max(0, (cx - bw / 2) * W))
+                    py1 = int(max(0, (cy - bh / 2) * H))
+                    px2 = int(min(W, (cx + bw / 2) * W))
+                    py2 = int(min(H, (cy + bh / 2) * H))
+                    try:
+                        fill = self.sam2.mask_fill_ratio(image_source, (px1, py1, px2, py2))
+                        score = round(self._combined_score(conf, fill), 3)
+                        # Drop noisy boxes below review threshold for mature classes.
+                        if score < self.review_thr:
+                            continue
+                    except Exception as e:
+                        print(f"[SAM2] {label} skipped — {e}")
+
             annotations.append({
                 "from_name": "label",
                 "to_name":   "image",
@@ -274,7 +340,7 @@ class GDINOBackend(LabelStudioMLBase):
                     "rotation":        0,
                     "rectanglelabels": [label],
                 },
-                "score": round(float(conf), 3),
+                "score": score,
             })
 
         # Class-aware NMS: dedupe within each class but keep cross-class
@@ -312,14 +378,29 @@ class GDINOBackend(LabelStudioMLBase):
             if kw_words and kw_words.issubset(p_words):
                 return label
 
-        # Pass 3 — any single distinctive word of the phrase matches a keyword
-        # (only for words >=4 chars to avoid spurious matches on "a"/"the"/etc.)
+        # Pass 3 — head-noun match (last word of the keyword).
+        # Caveat from 2026-05-08 debug: matching ANY position-of-keyword word
+        # caused bike→bus mislabels because DINO sometimes returns
+        # "large motorbike" / "city scooter", and the generic adjective hit
+        # the bus prompt's "large bus" / "city bus" entries via Pass 3.
+        # Rules now:
+        #   - Word must equal the LAST word of the keyword (the head noun).
+        #   - Word must be >=6 chars (filters "large", "city", "tour" entirely).
+        #   - The head noun must map to exactly ONE class across all keywords;
+        #     ambiguous head nouns (e.g. "taxi" — used in both class 4 and
+        #     class 9 prompts) are skipped here and the box is dropped.
+        head_to_labels: dict[str, set[str]] = {}
+        for kw, lbl in self.phrase_map.items():
+            head = norm(kw).split()[-1] if norm(kw).split() else ""
+            if len(head) >= 6:
+                head_to_labels.setdefault(head, set()).add(lbl)
+
         for word in p_words:
-            if len(word) < 4:
+            if len(word) < 6:
                 continue
-            for keyword, label in self.phrase_map.items():
-                if word in norm(keyword).split():
-                    return label
+            labels = head_to_labels.get(word)
+            if labels and len(labels) == 1:
+                return next(iter(labels))
 
         # No match — signal caller to drop the box.
         return None

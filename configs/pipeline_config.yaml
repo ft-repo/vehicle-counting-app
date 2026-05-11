@@ -6,8 +6,16 @@ gdino:
   text_threshold: 0.25
 
 sam2:
-  config: sam2_hiera_s.yaml
+  config:  sam2_hiera_s.yaml
   weights: ~/sam2_weights/sam2_small.pt
+  enabled: false        # flip to true after smoke testing live LS-ML traffic
+  device:  cpu          # keep CPU until run2 frees the GPU
+
+# Per-class maturity gate: only run SAM2 chain for classes with mAP50 ≥ threshold.
+# Source path is whichever val_results.json reflects the currently-deployed model.
+level_gate:
+  source: /home/admin/vehicle-counting-app/runs/yolo26n/run1/val_results.json
+  level2_min_map50: 0.50
 
 scoring:
   auto_accept: 0.75   # combined score >= this -> accepted/
@@ -22,35 +30,97 @@ scoring:
 device: cpu
 
 class_names:
-  0: person
-  1: car
-  2: bike
-  3: truck
-  4: bus
-  5: taxi
-  6: pickup
-  7: trailer
-  8: tuktuk
-  9: agri_truck
+  0:  car
+  1:  bike
+  2:  truck
+  3:  bus
+  4:  taxi
+  5:  pickup
+  6:  trailer
+  7:  person
+  8:  cone
+  9:  tuktuk
   10: van
+  11: agri_truck
+  12: ambulance
+  13: agri_vehicle
 
 # Prompts passed to Grounding DINO (dot-separated keywords per class).
-# Rules of thumb (from 2026-05-06 tuning):
+# Rules of thumb (from 2026-05-06 + 2026-05-08 tuning):
 #   - Avoid generic terms like "vehicle", "object", "thing" — they over-trigger.
 #   - Avoid stop-word-y nouns like "street", "road" inside multi-word phrases —
 #     DINO sometimes returns just "street" as a match, and the phrase_map then
 #     yields a wrong label.
 #   - Keep each phrase distinctive enough that DINO's grounding picks the right
 #     class. One specific term beats five generic ones.
+#   - Avoid bare overlapping tokens across classes (e.g. plain "tractor" was
+#     dropped from agriculture because it collided with "tractor trailer" in
+#     class 6 and the phrase_map first-match-wins resolved unpredictably).
+#   - Thai-context cues (songthaew, motorized rickshaw, BMTA-style colours)
+#     help DINO ground on the actual things on Thai roads.
 class_prompts:
-  0: "person walking . person sitting . pedestrian"
-  1: "car . sedan . hatchback"
-  2: "motorcycle . motorbike . scooter . bicycle"
-  3: "truck . lorry . cargo truck"
-  4: "bus . coach . minibus"
-  5: "taxi . taxicab . cab"
-  6: "pickup truck . pickup"
-  7: "trailer . semi-trailer . cargo trailer"
-  8: "tuk-tuk . tuktuk . three-wheeler . auto-rickshaw"
-  9: "tractor . combine harvester . hay wagon"
-  10: "van . minivan . cargo van"
+  # 0  car — drop bare "car" (too greedy via Pass-1 substring trap) AND
+  #          "compact car" (Pass-3 was a trap before the head-noun-only
+  #          tightening). "passenger car" is now safe (Pass 3 head noun
+  #          "car" is 3 chars, skipped) and gives DINO a generic anchor
+  #          when it can't tell the body style (sedan/hatchback/suv).
+  0:  "sedan . hatchback . suv . station wagon . passenger car"
+
+  # 1  bike — DINO grounds rider + bike together naturally. Use head-noun
+  #          forms (no "with rider" qualifier — kept causing Pass-3 misses).
+  1:  "motorcycle . motorbike . scooter . motor scooter . moped"
+
+  # 2  truck — drop "delivery truck" (Pass-3 trap: "delivery" also in van).
+  #          Distinctive head nouns only.
+  2:  "cargo truck . box truck . dump truck . concrete mixer truck . six wheel truck"
+
+  # 3  bus — bare "bus" was risky too (could match "bus stop" outputs).
+  #          Restored "large bus / city bus" since the tightened Pass-3
+  #          (≥6 chars + head-noun-only) makes "large"/"city" safe — both
+  #          are <6 chars so they can't fire Pass 3 anymore.
+  3:  "minibus . double decker bus . school bus . coach bus . large bus . city bus"
+
+  # 4  taxi — Thai taxis are 2-tone (yellow-green, pink) with rooftop sign.
+  4:  "yellow green taxi . pink taxi . taxi cab . taxi with rooftop sign"
+
+  # 5  pickup — drop bare "pickup truck" (substring-traps class-11 phrases
+  #            like "pickup truck loaded with hay"). The qualified form
+  #            "pickup truck with cargo bed" still matches a bare "pickup
+  #            truck" DINO output via reverse-substring.
+  5:  "pickup truck with cargo bed . songthaew . pickup with rear canopy"
+
+  # 6  trailer — head nouns only. Bare 'tractor' was dropped earlier to
+  #             avoid colliding with class 11.
+  6:  "semi trailer . articulated trailer . cargo trailer"
+
+  # 7  person — pedestrians (walking, standing at crossings/bus stops).
+  7:  "person walking . pedestrian . person standing"
+
+  # 8  cone — NEW. Orange/red traffic cones at construction zones.
+  8:  "traffic cone . orange safety cone . road work cone . witch hat cone"
+
+  # 9  tuktuk — bare "tuktuk" doesn't ground reliably in DINO; the visual is
+  #            covered three-wheel motorised taxi. "Motorized rickshaw" + "three
+  #            wheel taxi" are the phrases DINO has solid training on.
+  9:  "tuk-tuk . tuk tuk . motorized rickshaw . three wheel taxi"
+
+  # 10 van — drop "passenger van" / "delivery van" (Pass-3 traps). Keep
+  #          distinctive head nouns.
+  10: "cargo van . minivan . courier van"
+
+  # 11 agri_truck — PURPOSE-BUILT agricultural vehicles: tractors, harvesters,
+  #                hay balers, farm-built trucks. Distinct from agri_vehicle (13)
+  #                which is a regular pickup/truck CARRYING farm cargo.
+  #                Avoid bare 'tractor' (collides with class 6 trailer).
+  11: "agricultural tractor . combine harvester . farm tractor . hay baler . agricultural truck . farm truck"
+
+  # 12 ambulance — distinctive head noun, no bare "van" to avoid class-10 collision.
+  #               Thai ambulances are typically Hi-Ace vans with rooftop red/blue
+  #               lights and red cross / rescue livery.
+  12: "ambulance . emergency medical vehicle . rescue van with red cross . hospital ambulance"
+
+  # 13 agri_vehicle — REGULAR pickup/truck/trailer carrying agricultural cargo
+  #                  (hay bales, sugarcane, rice sacks). Distinct from agri_truck (11)
+  #                  which is a purpose-built farm machine. The qualifier "loaded with"
+  #                  / "with X" anchors keep these from collapsing to bare class-2/5/6.
+  13: "pickup truck loaded with hay . pickup truck with sugarcane . truck loaded with rice sacks . truck with hay bales . pickup carrying farm produce"

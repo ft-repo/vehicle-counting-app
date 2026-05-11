@@ -372,7 +372,9 @@ vehicle-counting-app/
 
 ## Supported Classes
 
-Defined in `models/coco_drr7.names`:
+Two schemas are kept side-by-side during the run1 → run2 transition. The names file the app reads is set in `config/scene_config.json` under `yolo.names`.
+
+### 11-class schema — currently deployed (run1, `models/coco_drr7.names`)
 
 | ID | Class | ID | Class |
 |---|---|---|---|
@@ -382,6 +384,19 @@ Defined in `models/coco_drr7.names`:
 | 3 | truck | 8 | tuktuk |
 | 4 | bus | 9 | agri_truck |
 | | | 10 | van |
+
+### 12-class schema — canonical, staged (run2, `models/traffic12.names`)
+
+Adopted as the standard 2026-05-08. Adds `cone`, renames `agri_truck` → `agriculture`, reorders so `car=0`. Activates when run2's ONNX is loaded.
+
+| ID | Class | ID | Class |
+|---|---|---|---|
+| 0 | car | 6 | trailer |
+| 1 | bike | 7 | person |
+| 2 | truck | 8 | cone |
+| 3 | bus | 9 | tuktuk |
+| 4 | taxi | 10 | van |
+| 5 | pickup | 11 | agriculture |
 
 ---
 

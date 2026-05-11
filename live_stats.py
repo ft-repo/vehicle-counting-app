@@ -224,6 +224,10 @@ def build_feed_panel(stats: dict | None) -> Panel:
         g.add_row("Avg confidence",
                   Text(f"{avg_c:.2f}",
                        style=C_GOOD if avg_c >= 0.7 else (C_WARN if avg_c >= 0.5 else C_BAD)))
+        al_saved = stats.get("al_saved", 0)
+        if al_saved:
+            g.add_row("AL saved",
+                      Text(f"{al_saved}", style=C_ACCENT))
         g.add_row("Uptime",
                   Text(fmt_uptime(stats.get("uptime_s", 0)), style=C_DIM))
         g.add_row("Source",

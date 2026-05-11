@@ -92,5 +92,13 @@
     "input_size": 416,
     "conf": 0.2,
     "nms": 0.4
+  },
+  "active_learning": {
+    "enabled": false,
+    "hot_dir": "~/al_hot",
+    "confidence_threshold": 0.60,
+    "cooldown_s": 5.0,
+    "max_per_hour": 200,
+    "jpeg_quality": 90
   }
 }

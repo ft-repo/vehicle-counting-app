@@ -45,6 +45,8 @@ from typing import Dict, List, Optional, Set, Tuple
 import cv2
 import numpy as np
 
+from tools.active_learning import LowConfCapturer
+
 # ============================================================
 #  Windows DPI helper
 # ============================================================
@@ -141,6 +143,7 @@ class SceneCfg:
     roi_pts:     List[Tuple[int,int]] = field(default_factory=list)
     lanes:       List[LaneCfg]   = field(default_factory=list)
     path:        str              = ""
+    active_learning: dict         = field(default_factory=dict)
 
     @classmethod
     def load(cls, file_path: str) -> "SceneCfg":
@@ -170,6 +173,8 @@ class SceneCfg:
             )
             cfg.lanes.append(lane)
 
+        cfg.active_learning = data.get('active_learning', {}) or {}
+
         print(f"[CFG] Loaded {len(cfg.lanes)} lanes, {len(cfg.roi_pts)} ROI points from {file_path}")
         return cfg
 
@@ -197,11 +202,11 @@ class SceneCfg:
                 for l in self.lanes
             ]
         }
-        # Preserve camera/yolo sections from existing file
+        # Preserve camera/yolo/active_learning sections from existing file
         try:
             with open(self.path, 'r') as f:
                 existing = json.load(f)
-            for k in ('camera', 'yolo'):
+            for k in ('camera', 'yolo', 'active_learning'):
                 if k in existing:
                     data[k] = existing[k]
         except Exception:
@@ -1311,7 +1316,7 @@ class StatsWriter:
 
     def tick(self, fps: float, frame_idx: int,
              tracks: list, class_counts: dict, scene_cfg,
-             frame_dets: dict = None):
+             frame_dets: dict = None, al_saved: int = 0):
         now = time.time()
         if now - self._last_write < self.WRITE_INTERVAL:
             return
@@ -1336,6 +1341,7 @@ class StatsWriter:
             "conf_thresh":   self.conf,
             "active_tracks": active,
             "avg_conf":      avg_conf,
+            "al_saved":      int(al_saved),
             "frame_dets":    frame_dets or {},      # what model sees THIS frame
             "class_counts":  {k: list(v) for k, v in class_counts.items()},
             "lanes":         lanes_data,
@@ -1540,6 +1546,20 @@ def main():
     # --- Live stats writer ---
     _model_label = _derive_model_name(onnx_file, cfg_file)
     stats_writer = StatsWriter(args.stats, _model_label, input_str, args.conf)
+
+    # --- Active-learning capturer (low-conf frame save for re-labeling) ---
+    al_cfg = scene_cfg.active_learning or {}
+    al_capturer = LowConfCapturer(
+        out_dir       = al_cfg.get("hot_dir", "~/al_hot"),
+        threshold     = float(al_cfg.get("confidence_threshold", 0.60)),
+        cooldown_s    = float(al_cfg.get("cooldown_s", 5.0)),
+        max_per_hour  = int(al_cfg.get("max_per_hour", 200)),
+        enabled       = bool(al_cfg.get("enabled", False)),
+        jpeg_quality  = int(al_cfg.get("jpeg_quality", 90)),
+    )
+    if al_capturer.enabled:
+        print(f"[AL] enabled — hot_dir={al_capturer.out_dir}  thr={al_capturer.threshold}  "
+              f"cooldown={al_capturer.cooldown_s}s  cap={al_capturer.max_per_hour}/h")
 
     # --- Tracker ---
     tracker = CentroidTracker()
@@ -1832,6 +1852,10 @@ def main():
         # --- Update tracker ---
         tracks = tracker.update(dets)
 
+        # --- Active-learning: save frames where any det is below threshold ---
+        if al_capturer.enabled and dets:
+            al_capturer.maybe_save(frame, dets, frame_idx, source=input_str)
+
         # --- Lane crossing ---
         for trk in tracks:
             if trk.hit_streak < MIN_HIT_STREAK:
@@ -1942,7 +1966,8 @@ def main():
         fps_display = 0.9 * fps_display + 0.1 * (1.0 / max(elapsed, 1e-6))
 
         # --- Live stats ---
-        stats_writer.tick(fps_display, frame_idx, tracks, class_counts, scene_cfg, frame_dets)
+        stats_writer.tick(fps_display, frame_idx, tracks, class_counts, scene_cfg, frame_dets,
+                          al_saved=al_capturer.saved_count)
 
         # --- Swap pending model if background load finished ---
         if _sw_result[0] is not None and (_sw_thread is None or not _sw_thread.is_alive()):
