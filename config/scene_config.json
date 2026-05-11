@@ -21,6 +21,10 @@
       ],
       [
         10,
+        694
+      ],
+      [
+        10,
         1070
       ],
       [
@@ -36,10 +40,10 @@
       "enabled": true,
       "color": "#FF8800",
       "line": {
-        "x1": 859,
-        "y1": 715,
-        "x2": 575,
-        "y2": 745
+        "x1": 936,
+        "y1": 716,
+        "x2": 688,
+        "y2": 695
       },
       "direction": "both",
       "arrow_in": "top_to_bottom",
@@ -52,8 +56,8 @@
       "enabled": true,
       "color": "#00AAFF",
       "line": {
-        "x1": 922,
-        "y1": 742,
+        "x1": 938,
+        "y1": 713,
         "x2": 1260,
         "y2": 740
       },
@@ -68,10 +72,10 @@
       "enabled": true,
       "color": "#FF00FF",
       "line": {
-        "x1": 559,
-        "y1": 744,
-        "x2": 23,
-        "y2": 749
+        "x1": 670,
+        "y1": 696,
+        "x2": 409,
+        "y2": 675
       },
       "direction": "both",
       "arrow_in": "top_to_bottom",
@@ -99,6 +103,7 @@
     "confidence_threshold": 0.6,
     "cooldown_s": 5.0,
     "max_per_hour": 200,
-    "jpeg_quality": 90
+    "jpeg_quality": 90,
+    "mature_classes": ["car", "bike", "truck", "bus", "taxi", "pickup"]
   }
 }

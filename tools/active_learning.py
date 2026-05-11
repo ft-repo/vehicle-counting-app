@@ -38,6 +38,8 @@ class LowConfCapturer:
         max_per_hour: int = 200,
         enabled: bool = True,
         jpeg_quality: int = 90,
+        mature_classes: Iterable[str] | None = None,
+        class_names: list[str] | None = None,
     ) -> None:
         self.out_dir       = Path(os.path.expanduser(out_dir))
         self.threshold     = float(threshold)
@@ -45,6 +47,8 @@ class LowConfCapturer:
         self.max_per_hour  = int(max_per_hour)
         self.enabled       = bool(enabled)
         self.jpeg_quality  = int(jpeg_quality)
+        self.mature_classes: set[str] = set(mature_classes) if mature_classes else set()
+        self.class_names: list[str]   = list(class_names) if class_names else []
         self._last_save_at: float = 0.0
         self._save_history: deque[float] = deque(maxlen=max_per_hour + 1)
         self.saved_count: int = 0
@@ -89,7 +93,22 @@ class LowConfCapturer:
         if not self.enabled:
             return False
 
-        lo, det_rows = self._min_confidence(dets)
+        # Materialise dets (iterable may be single-use)
+        dets_list = list(dets)
+
+        # Mature-class filter: if configured, only consider detections on classes
+        # with known mAP50 > 0.5 (i.e. classes the trained model already handles).
+        # The point is to ignore brand-new classes whose detections are always
+        # uncertain (they'd flood the capture queue with non-informative frames).
+        if self.mature_classes and self.class_names:
+            def _name(d):
+                cid = int(getattr(d, "class_id", -1))
+                return self.class_names[cid] if 0 <= cid < len(self.class_names) else ""
+            dets_list = [d for d in dets_list if _name(d) in self.mature_classes]
+            if not dets_list:
+                return False
+
+        lo, det_rows = self._min_confidence(dets_list)
         if lo is None or lo >= self.threshold:
             return False
         if not self._can_save():

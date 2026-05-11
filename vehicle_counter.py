@@ -1550,16 +1550,20 @@ def main():
     # --- Active-learning capturer (low-conf frame save for re-labeling) ---
     al_cfg = scene_cfg.active_learning or {}
     al_capturer = LowConfCapturer(
-        out_dir       = al_cfg.get("hot_dir", "~/al_hot"),
-        threshold     = float(al_cfg.get("confidence_threshold", 0.60)),
-        cooldown_s    = float(al_cfg.get("cooldown_s", 5.0)),
-        max_per_hour  = int(al_cfg.get("max_per_hour", 200)),
-        enabled       = bool(al_cfg.get("enabled", False)),
-        jpeg_quality  = int(al_cfg.get("jpeg_quality", 90)),
+        out_dir         = al_cfg.get("hot_dir", "~/al_hot"),
+        threshold       = float(al_cfg.get("confidence_threshold", 0.60)),
+        cooldown_s      = float(al_cfg.get("cooldown_s", 5.0)),
+        max_per_hour    = int(al_cfg.get("max_per_hour", 200)),
+        enabled         = bool(al_cfg.get("enabled", False)),
+        jpeg_quality    = int(al_cfg.get("jpeg_quality", 90)),
+        mature_classes  = al_cfg.get("mature_classes") or [],
+        class_names     = detector.class_names,
     )
     if al_capturer.enabled:
+        mature_str = ",".join(sorted(al_capturer.mature_classes)) if al_capturer.mature_classes else "(all classes)"
         print(f"[AL] enabled — hot_dir={al_capturer.out_dir}  thr={al_capturer.threshold}  "
-              f"cooldown={al_capturer.cooldown_s}s  cap={al_capturer.max_per_hour}/h")
+              f"cooldown={al_capturer.cooldown_s}s  cap={al_capturer.max_per_hour}/h  "
+              f"mature={mature_str}")
 
     # --- Tracker ---
     tracker = CentroidTracker()
