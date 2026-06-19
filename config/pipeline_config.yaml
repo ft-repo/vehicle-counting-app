@@ -8,13 +8,18 @@ gdino:
 sam2:
   config:  sam2_hiera_s.yaml
   weights: ~/sam2_weights/sam2_small.pt
-  enabled: false        # flip to true after smoke testing live LS-ML traffic
-  device:  cpu          # keep CPU until run2 frees the GPU
+  # DISABLED. While false, gdino_ls_backend returns DINO boxes as suggestions for
+  # every class and the level_gate below has no effect. Re-enable (true) only when
+  # BOTH hold: (a) a class clears the level-2 gate (mAP50 >= level2_min_map50) so
+  # mask-refine is worth the cost, and (b) the DGX device issue is resolved (see the
+  # `device:` note below — Blackwell sm_121). Then smoke-test on live LS-ML traffic.
+  enabled: false
+  device:  cpu          # see device note below (Blackwell sm_121 / torch)
 
 # Per-class maturity gate: only run SAM2 chain for classes with mAP50 ≥ threshold.
 # Source path is whichever val_results.json reflects the currently-deployed model.
 level_gate:
-  source: /home/admin/vehicle-counting-app/runs/yolo26n/run1/val_results.json
+  source: /home/admin/vehicle-counting-app/runs/yolo26n/run4/val_results.json
   level2_min_map50: 0.50
 
 scoring:
@@ -42,8 +47,8 @@ class_names:
   9:  tuktuk
   10: van
   11: agri_truck
-  12: ambulance
-  13: agri_vehicle
+  12: agri_vehicle
+  13: ambulance
 
 # Prompts passed to Grounding DINO (dot-separated keywords per class).
 # Rules of thumb (from 2026-05-06 + 2026-05-08 tuning):
@@ -109,18 +114,18 @@ class_prompts:
   10: "cargo van . minivan . courier van"
 
   # 11 agri_truck — PURPOSE-BUILT agricultural vehicles: tractors, harvesters,
-  #                hay balers, farm-built trucks. Distinct from agri_vehicle (13)
+  #                hay balers, farm-built trucks. Distinct from agri_vehicle (12)
   #                which is a regular pickup/truck CARRYING farm cargo.
   #                Avoid bare 'tractor' (collides with class 6 trailer).
   11: "agricultural tractor . combine harvester . farm tractor . hay baler . agricultural truck . farm truck"
 
-  # 12 ambulance — distinctive head noun, no bare "van" to avoid class-10 collision.
-  #               Thai ambulances are typically Hi-Ace vans with rooftop red/blue
-  #               lights and red cross / rescue livery.
-  12: "ambulance . emergency medical vehicle . rescue van with red cross . hospital ambulance"
-
-  # 13 agri_vehicle — REGULAR pickup/truck/trailer carrying agricultural cargo
+  # 12 agri_vehicle — REGULAR pickup/truck/trailer carrying agricultural cargo
   #                  (hay bales, sugarcane, rice sacks). Distinct from agri_truck (11)
   #                  which is a purpose-built farm machine. The qualifier "loaded with"
   #                  / "with X" anchors keep these from collapsing to bare class-2/5/6.
-  13: "pickup truck loaded with hay . pickup truck with sugarcane . truck loaded with rice sacks . truck with hay bales . pickup carrying farm produce"
+  12: "pickup truck loaded with hay . pickup truck with sugarcane . truck loaded with rice sacks . truck with hay bales . pickup carrying farm produce"
+
+  # 13 ambulance — distinctive head noun, no bare "van" to avoid class-10 collision.
+  #               Thai ambulances are typically Hi-Ace vans with rooftop red/blue
+  #               lights and red cross / rescue livery.
+  13: "ambulance . emergency medical vehicle . rescue van with red cross . hospital ambulance"

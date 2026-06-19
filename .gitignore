@@ -27,7 +27,11 @@ active_learning/
 vehicle_counts.csv
 live_stats.json
 logs/vehicle_counts.csv
+logs/live_stats.json
 logs/model_cmd.txt
+
+# ── Test scratch ─────────────────────────────────────────────────────────────
+tests/sample_corpus/
 
 # ── Label Studio ─────────────────────────────────────────────────────────────
 label-studio/

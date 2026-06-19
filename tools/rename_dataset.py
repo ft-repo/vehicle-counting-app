@@ -17,7 +17,13 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 
-CLASSES   = ['person','car','bike','truck','bus','taxi','pickup','trailer','tuktuk','agri_truck','van']
+# Class list = the canonical schema (drives which <class>/ subdirs we walk).
+# Loaded from models/traffic14.names so a stale hardcoded list can't silently
+# skip newer classes (cone / agri_vehicle / ambulance) — the person-first landmine.
+_NAMES = Path(__file__).resolve().parent.parent / 'models' / 'traffic14.names'
+if not _NAMES.exists():
+    raise SystemExit(f'[FATAL] canonical names file not found: {_NAMES}')
+CLASSES   = [n.strip() for n in _NAMES.read_text().splitlines() if n.strip()]
 IMG_EXTS  = {'.jpg', '.jpeg', '.png', '.bmp'}
 SAFE_PAT  = re.compile(r'^[a-z_]+_\d{4}\.jpg$')   # already-renamed pattern
 

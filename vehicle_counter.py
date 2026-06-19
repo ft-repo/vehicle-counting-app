@@ -82,22 +82,23 @@ MAX_LOST_FRAMES  = 30
 MIN_HIT_STREAK   = 2
 
 # Classes to exclude from counting and display
-SKIP_CLASSES: set = {"agri_truck"}
+SKIP_CLASSES: set = {"agriculture", "agri_truck", "agri_vehicle"}
 
 CLASS_COLORS = [
-    ( 51, 204, 255),  # person
-    (255,  51,  51),  # car
-    (255, 204,  51),  # bike
-    ( 51, 255, 153),  # truck
-    (204,  51, 255),  # bus
-    ( 51, 102, 255),  # taxi
-    (153, 255,  51),  # pickup
-    (255, 153, 204),  # trailer
-    (153, 204, 255),  # tuktuk
-    (255, 255,  51),  # agri_truck
-    (204, 255, 153),  # van
-    ( 51, 255, 255),
-    (255,  51, 204),
+    (255,  51,  51),  #  0 car
+    (255, 204,  51),  #  1 bike
+    ( 51, 255, 153),  #  2 truck
+    (204,  51, 255),  #  3 bus
+    ( 51, 102, 255),  #  4 taxi
+    (153, 255,  51),  #  5 pickup
+    (255, 153, 204),  #  6 trailer
+    ( 51, 204, 255),  #  7 person
+    (255, 102, 102),  #  8 cone
+    (153, 204, 255),  #  9 tuktuk
+    (204, 255, 153),  # 10 van
+    (255, 255,  51),  # 11 agri_truck
+    (255,  51, 204),  # 12 agri_vehicle
+    ( 51, 255, 255),  # 13 ambulance
 ]
 
 def class_color(cls_id: int) -> Tuple[int, int, int]:
@@ -143,7 +144,7 @@ class SceneCfg:
     roi_pts:     List[Tuple[int,int]] = field(default_factory=list)
     lanes:       List[LaneCfg]   = field(default_factory=list)
     path:        str              = ""
-    active_learning: dict         = field(default_factory=dict)
+    auto_capture: dict            = field(default_factory=dict)
 
     @classmethod
     def load(cls, file_path: str) -> "SceneCfg":
@@ -173,7 +174,7 @@ class SceneCfg:
             )
             cfg.lanes.append(lane)
 
-        cfg.active_learning = data.get('active_learning', {}) or {}
+        cfg.auto_capture = data.get('auto_capture', data.get('active_learning', {})) or {}
 
         print(f"[CFG] Loaded {len(cfg.lanes)} lanes, {len(cfg.roi_pts)} ROI points from {file_path}")
         return cfg
@@ -202,11 +203,12 @@ class SceneCfg:
                 for l in self.lanes
             ]
         }
-        # Preserve camera/yolo/active_learning sections from existing file
+        # Preserve sections the editor doesn't manage (camera/yolo/auto_capture/
+        # model_presets) from the existing file so a UI save can't wipe them.
         try:
             with open(self.path, 'r') as f:
                 existing = json.load(f)
-            for k in ('camera', 'yolo', 'active_learning'):
+            for k in ('camera', 'yolo', 'auto_capture', 'model_presets'):
                 if k in existing:
                     data[k] = existing[k]
         except Exception:
@@ -358,6 +360,13 @@ class CentroidTracker:
 # ============================================================
 #  YOLO Detector
 # ============================================================
+try:
+    import onnxruntime as _ort
+    _ORT_AVAILABLE = True
+except ImportError:
+    _ORT_AVAILABLE = False
+
+
 class YoloDetector:
     def __init__(self):
         self.net         = None
@@ -366,7 +375,13 @@ class YoloDetector:
         self.conf_thresh = 0.35
         self.nms_thresh  = 0.40
         self.net_size    = 416
-        self.model_type  = 'darknet'   # 'darknet' (yolov4-tiny) or 'yolov8' (covers v8/11/26 ONNX exports)
+        # 'darknet' (yolov4-tiny), 'yolov8' (v8/v11 ONNX through cv2.dnn or ort),
+        # 'yolo26n_e2e' (NMS-free head with (1,300,6) output, ort only)
+        self.model_type  = 'darknet'
+        # 'cv2dnn' or 'ort' — set during load()
+        self.backend     = 'cv2dnn'
+        self.ort_session = None
+        self.ort_input   = None
 
     def load(self, cfg_file: str = '', weights_file: str = '', names_file: str = '',
              use_gpu: bool = False, onnx_file: str = '', force_gpu: bool = False) -> bool:
@@ -375,16 +390,14 @@ class YoloDetector:
             self.class_names = [l.strip() for l in f if l.strip()]
         print(f"[INFO] Loaded {len(self.class_names)} class names.")
 
-        # Load network
+        if onnx_file:
+            return self._load_onnx(onnx_file, use_gpu=use_gpu, force_gpu=force_gpu)
+
+        # Darknet path (YOLOv4-tiny)
         try:
-            if onnx_file:
-                self.net        = cv2.dnn.readNetFromONNX(onnx_file)
-                self.model_type = 'yolov8'
-                # net_size stays as whatever was set externally (from --size or scene_config input_size)
-                print(f"[INFO] Loaded YOLOv8 ONNX model: {onnx_file} at {self.net_size}px")
-            else:
-                self.net        = cv2.dnn.readNetFromDarknet(cfg_file, weights_file)
-                self.model_type = 'darknet'
+            self.net        = cv2.dnn.readNetFromDarknet(cfg_file, weights_file)
+            self.model_type = 'darknet'
+            self.backend    = 'cv2dnn'
         except cv2.error as e:
             print(f"[ERROR] OpenCV DNN load failed: {e}", file=sys.stderr)
             return False
@@ -393,33 +406,97 @@ class YoloDetector:
             print("[ERROR] Network is empty.", file=sys.stderr)
             return False
 
-        # Backend selection
+        if not self._select_cv2dnn_target(use_gpu=use_gpu, force_gpu=force_gpu):
+            return False
+        self.out_names = self.net.getUnconnectedOutLayersNames()
+        return True
+
+    def _load_onnx(self, onnx_file: str, use_gpu: bool, force_gpu: bool) -> bool:
+        # Try cv2.dnn first (fast path for v8/v11). If it fails (typically because the
+        # ONNX uses ops cv2.dnn doesn't implement, e.g. TopK in YOLO26n's NMS-free head),
+        # fall back to onnxruntime.
+        try:
+            net = cv2.dnn.readNetFromONNX(onnx_file)
+            if not net.empty():
+                self.net        = net
+                self.model_type = 'yolov8'
+                self.backend    = 'cv2dnn'
+                if not self._select_cv2dnn_target(use_gpu=use_gpu, force_gpu=force_gpu):
+                    return False
+                self.out_names  = self.net.getUnconnectedOutLayersNames()
+                # Validate cv2.dnn can EXECUTE the graph, not just parse it. Some ONNX
+                # (e.g. YOLO26n's TopK end-to-end head) load without raising but then fail
+                # at forward() — a probe forward surfaces that here so the cv2.error is
+                # caught and we fall back to onnxruntime below instead of crashing at runtime.
+                _probe = cv2.dnn.blobFromImage(
+                    np.zeros((self.net_size, self.net_size, 3), np.uint8),
+                    1/255.0, (self.net_size, self.net_size), swapRB=True, crop=False)
+                self.net.setInput(_probe)
+                self.net.forward(self.out_names)
+                print(f"[INFO] Loaded ONNX via cv2.dnn: {onnx_file} at {self.net_size}px")
+                return True
+        except cv2.error as e:
+            print(f"[INFO] cv2.dnn rejected {onnx_file} ({str(e).splitlines()[-1] if str(e) else 'empty error'}); trying onnxruntime.")
+            self.net = None  # discard the un-runnable cv2 net before the ort fallback
+
+        if not _ORT_AVAILABLE:
+            print(f"[ERROR] Cannot load {onnx_file}: cv2.dnn failed and onnxruntime is not installed.", file=sys.stderr)
+            print("[ERROR] Install with: pip install onnxruntime", file=sys.stderr)
+            return False
+
+        try:
+            # Provider list is ranked by performance; ort picks the first one that can host
+            # each op. We always offer CUDA / CoreML if they're available — onnxruntime
+            # silently omits providers it can't initialize, so this is safe on any platform.
+            available = _ort.get_available_providers()
+            providers: list = []
+            if 'CUDAExecutionProvider' in available:
+                providers.append('CUDAExecutionProvider')
+            if 'CoreMLExecutionProvider' in available:
+                providers.append('CoreMLExecutionProvider')
+            providers.append('CPUExecutionProvider')
+
+            sess_opts = _ort.SessionOptions()
+            sess_opts.graph_optimization_level = _ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            sess_opts.execution_mode = _ort.ExecutionMode.ORT_SEQUENTIAL
+
+            self.ort_session = _ort.InferenceSession(onnx_file, sess_options=sess_opts, providers=providers)
+            self.ort_input   = self.ort_session.get_inputs()[0].name
+            out_shape        = self.ort_session.get_outputs()[0].shape
+            # (1, 300, 6) end-to-end head (YOLO26n with NMS baked in) vs (1, 4+nc, 8400) raw v8 head.
+            if len(out_shape) == 3 and out_shape[-1] == 6:
+                self.model_type = 'yolo26n_e2e'
+            else:
+                self.model_type = 'yolov8'
+            self.backend = 'ort'
+            print(f"[INFO] Loaded ONNX via onnxruntime: {onnx_file} at {self.net_size}px "
+                  f"(model_type={self.model_type}, providers={self.ort_session.get_providers()})")
+            return True
+        except Exception as e:
+            print(f"[ERROR] onnxruntime load failed: {e}", file=sys.stderr)
+            return False
+
+    def _select_cv2dnn_target(self, use_gpu: bool, force_gpu: bool) -> bool:
         if use_gpu:
             try:
                 self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
                 self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-                # Quick probe to confirm CUDA actually works
                 dummy = np.zeros((self.net_size, self.net_size, 3), np.uint8)
                 blob  = cv2.dnn.blobFromImage(dummy, 1/255.0,
                             (self.net_size, self.net_size), swapRB=True, crop=False)
                 self.net.setInput(blob)
                 self.net.forward(self.net.getUnconnectedOutLayersNames())
                 print("[INFO] Backend: CUDA GPU")
+                return True
             except Exception as e:
                 if force_gpu:
                     print(f"[ERROR] GPU requested but CUDA init failed: {e}")
                     print("[ERROR] Install CUDA-enabled OpenCV or choose CPU option.")
                     return False
                 print(f"[WARN] GPU init failed ({e}), falling back to CPU.")
-                self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-                self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-                print("[INFO] Backend: OpenCV DNN CPU")
-        else:
-            self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-            self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-            print("[INFO] Backend: OpenCV DNN CPU")
-
-        self.out_names = self.net.getUnconnectedOutLayersNames()
+        self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        print("[INFO] Backend: OpenCV DNN CPU")
         return True
 
     def class_name(self, cls_id: int) -> str:
@@ -427,22 +504,44 @@ class YoloDetector:
             return self.class_names[cls_id]
         return "unknown"
 
+    @staticmethod
+    def _letterbox(img, size, color=(114, 114, 114)):
+        """Resize keeping aspect ratio, pad to a square size×size (matches
+        Ultralytics training preprocessing). Returns (canvas, r, pad_x, pad_y);
+        invert boxes with: x_orig = (x_net - pad_x) / r, y_orig = (y_net - pad_y) / r."""
+        h, w = img.shape[:2]
+        r = min(size / w, size / h)
+        nw, nh = round(w * r), round(h * r)
+        resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        canvas = np.full((size, size, 3), color, dtype=img.dtype)
+        pad_x, pad_y = (size - nw) // 2, (size - nh) // 2
+        canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
+        return canvas, r, pad_x, pad_y
+
     def detect(self, frame: np.ndarray) -> List[Detection]:
         h, w = frame.shape[:2]
-        blob = cv2.dnn.blobFromImage(frame, 1/255.0,
+        # Letterbox to the network's square input (aspect-preserving + pad) so
+        # inference preprocessing matches training; boxes mapped back via (r, pad).
+        lb, r, pad_x, pad_y = self._letterbox(frame, self.net_size)
+        blob = cv2.dnn.blobFromImage(lb, 1/255.0,
                     (self.net_size, self.net_size),
                     swapRB=True, crop=False)
+        if self.backend == 'ort':
+            outs = self.ort_session.run(None, {self.ort_input: blob})
+            return self._post_process(w, h, outs, r, pad_x, pad_y)
         self.net.setInput(blob)
         outs = self.net.forward(self.out_names)
-        return self._post_process(w, h, outs)
+        return self._post_process(w, h, outs, r, pad_x, pad_y)
 
-    def _post_process(self, W: int, H: int, outs) -> List[Detection]:
+    def _post_process(self, W: int, H: int, outs, r: float, pad_x: int, pad_y: int) -> List[Detection]:
+        if self.model_type == 'yolo26n_e2e':
+            return self._post_process_yolo26n_e2e(W, H, outs, r, pad_x, pad_y)
         if self.model_type == 'yolov8':
-            return self._post_process_yolov8(W, H, outs)
+            return self._post_process_yolov8(W, H, outs, r, pad_x, pad_y)
 
         # --- YOLOv4 darknet output ---
-        # Each 'out' is shape (N, 5+classes), values normalized 0-1
-        # row = [cx, cy, w, h, obj_conf, class0, class1, ...]
+        # Each 'out' is shape (N, 5+classes), values normalized 0-1 in the
+        # letterboxed input — undo the letterbox to map back to the original frame.
         class_ids, confs, boxes = [], [], []
 
         for out in outs:
@@ -452,10 +551,10 @@ class YoloDetector:
                 conf   = float(row[4]) * float(scores[cls_id])
                 if conf < self.conf_thresh:
                     continue
-                cx = int(row[0] * W)
-                cy = int(row[1] * H)
-                bw = int(row[2] * W)
-                bh = int(row[3] * H)
+                cx = int((row[0] * self.net_size - pad_x) / r)
+                cy = int((row[1] * self.net_size - pad_y) / r)
+                bw = int((row[2] * self.net_size) / r)
+                bh = int((row[3] * self.net_size) / r)
                 x  = max(0, cx - bw // 2)
                 y  = max(0, cy - bh // 2)
                 bw = min(bw, W - x)
@@ -475,14 +574,42 @@ class YoloDetector:
                 ))
         return result
 
-    def _post_process_yolov8(self, W: int, H: int, outs) -> List[Detection]:
+    def _post_process_yolo26n_e2e(self, W: int, H: int, outs, r: float, pad_x: int, pad_y: int) -> List[Detection]:
+        # End-to-end head output: (1, 300, 6) rows of [x1, y1, x2, y2, conf, class_id]
+        # in self.net_size (letterboxed) px space, already NMS-applied by the model.
+        rows = outs[0][0]
+        # Vector filter first (much faster than per-row loop on 300 rows).
+        mask = rows[:, 4] >= self.conf_thresh
+        if not mask.any():
+            return []
+        kept = rows[mask]
+        n_classes = len(self.class_names)
+        result: List[Detection] = []
+        for row in kept:
+            cls_id = int(row[5])
+            if cls_id < 0 or cls_id >= n_classes:
+                continue
+            x1 = max(0, int((row[0] - pad_x) / r))
+            y1 = max(0, int((row[1] - pad_y) / r))
+            x2 = min(W, int((row[2] - pad_x) / r))
+            y2 = min(H, int((row[3] - pad_y) / r))
+            bw = x2 - x1
+            bh = y2 - y1
+            if bw <= 0 or bh <= 0:
+                continue
+            result.append(Detection(
+                rect       = (x1, y1, bw, bh),
+                class_id   = cls_id,
+                confidence = float(row[4]),
+            ))
+        return result
+
+    def _post_process_yolov8(self, W: int, H: int, outs, r: float, pad_x: int, pad_y: int) -> List[Detection]:
         # YOLOv8 ONNX output shape: (1, 4+nc, 8400)
         # Transpose to (8400, 4+nc) so each row = 1 candidate box
         # row = [cx, cy, w, h, class0_score, class1_score, ...]
-        # Coordinates are in 640px space — scale to original frame size
+        # Coordinates are in net_size (letterboxed) px space — undo letterbox to original frame
         predictions = outs[0][0].T
-        scale_x = W / self.net_size
-        scale_y = H / self.net_size
         class_ids, confs, boxes = [], [], []
 
         for row in predictions:
@@ -491,10 +618,10 @@ class YoloDetector:
             conf   = float(scores[cls_id])
             if conf < self.conf_thresh:
                 continue
-            cx = row[0] * scale_x
-            cy = row[1] * scale_y
-            bw = row[2] * scale_x
-            bh = row[3] * scale_y
+            cx = (row[0] - pad_x) / r
+            cy = (row[1] - pad_y) / r
+            bw = row[2] / r
+            bh = row[3] / r
             x  = max(0, int(cx - bw / 2))
             y  = max(0, int(cy - bh / 2))
             bw = min(int(bw), W - x)
@@ -1252,7 +1379,9 @@ def _derive_model_name(onnx_file: str, cfg_file: str) -> str:
         p = onnx_file.replace("\\", "/").lower()
         for arch in ("yolo26n", "yolo26s", "yolov8n", "yolov8s", "yolo11n", "yolo11s"):
             if arch in p:
-                run_m = _re.search(r'/(run\d+)/', p)
+                # Allow hyphenated run names (e.g. run3-2) — the original `run\d+`
+                # pattern dropped the suffix and made run3-2 look like an unnamed run.
+                run_m = _re.search(r'/(run\d+(?:-\d+)?)/', p)
                 run   = run_m.group(1) if run_m else ""
                 return f"{arch} {run}".strip()
     if cfg_file:
@@ -1295,6 +1424,8 @@ class StatsWriter:
 
     def __init__(self, path: str, model_name: str, source: str, conf: float):
         self.path        = path
+        if path:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.model_name  = model_name
         self.source      = source
         self.conf        = conf
@@ -1385,10 +1516,12 @@ def parse_args():
     p.add_argument("--nowin",  action="store_true", help="Headless mode")
     p.add_argument("--cpu",    action="store_true", help="Force CPU backend")
     p.add_argument("--gpu",    action="store_true", help="Force GPU (CUDA) backend")
-    p.add_argument("--stats",  default="live_stats.json",
-                   help="Write live stats JSON for dashboard (default: live_stats.json)")
+    p.add_argument("--stats",  default="logs/live_stats.json",
+                   help="Write live stats JSON for dashboard (default: logs/live_stats.json)")
     p.add_argument("--skip",   type=int, default=1,
                    help="Process 1 out of every N frames (default 1 = no skip). Use 2-3 to reduce CPU load on slow hardware.")
+    p.add_argument("--no-pace", dest="no_pace", action="store_true",
+                   help="Disable real-time pacing; consume frames as fast as possible (offline export / benchmarking).")
     return p.parse_args()
 
 
@@ -1425,7 +1558,7 @@ def main():
     # If scene_config.json provided, read YOLO paths from it when not overridden
     if scene_path and os.path.exists(scene_path):
         scene_dir    = os.path.dirname(os.path.abspath(scene_path))
-        scene_parent = os.path.dirname(scene_dir)  # one level up (counting_app/)
+        scene_parent = os.path.dirname(scene_dir)  # one level up (repo root)
 
         def resolve_model_path(raw: str) -> str:
             """Try path as-is, then relative to scene dir, then relative to parent dir."""
@@ -1547,23 +1680,31 @@ def main():
     _model_label = _derive_model_name(onnx_file, cfg_file)
     stats_writer = StatsWriter(args.stats, _model_label, input_str, args.conf)
 
-    # --- Active-learning capturer (low-conf frame save for re-labeling) ---
-    al_cfg = scene_cfg.active_learning or {}
+    # --- Auto-capture (low-conf + LapVar-gated frame save, optional LS push) ---
+    al_cfg = scene_cfg.auto_capture or {}
     al_capturer = LowConfCapturer(
-        out_dir         = al_cfg.get("hot_dir", "~/al_hot"),
-        threshold       = float(al_cfg.get("confidence_threshold", 0.60)),
-        cooldown_s      = float(al_cfg.get("cooldown_s", 5.0)),
-        max_per_hour    = int(al_cfg.get("max_per_hour", 200)),
-        enabled         = bool(al_cfg.get("enabled", False)),
-        jpeg_quality    = int(al_cfg.get("jpeg_quality", 90)),
-        mature_classes  = al_cfg.get("mature_classes") or [],
-        class_names     = detector.class_names,
+        out_dir          = al_cfg.get("hot_dir", "~/auto_capture"),
+        threshold        = float(al_cfg.get("confidence_threshold", 0.60)),
+        cooldown_s       = float(al_cfg.get("cooldown_s", 5.0)),
+        max_per_hour     = int(al_cfg.get("max_per_hour", 200)),
+        enabled          = bool(al_cfg.get("enabled", False)),
+        jpeg_quality     = int(al_cfg.get("jpeg_quality", 90)),
+        mature_classes   = al_cfg.get("mature_classes") or [],
+        skip_classes     = SKIP_CLASSES,
+        class_names      = detector.class_names,
+        lapvar_threshold = float(al_cfg.get("lapvar_threshold", 100.0)),
+        glitch_min_std   = float(al_cfg.get("glitch_min_std", 8.0)),
+        retention_days   = int(al_cfg.get("retention_days", 7)),
+        write_sidecar    = bool(al_cfg.get("write_sidecar", False)),
+        label_studio     = al_cfg.get("label_studio") or {},
     )
     if al_capturer.enabled:
         mature_str = ",".join(sorted(al_capturer.mature_classes)) if al_capturer.mature_classes else "(all classes)"
-        print(f"[AL] enabled — hot_dir={al_capturer.out_dir}  thr={al_capturer.threshold}  "
+        ls_str = f"LS→project {al_capturer.ls_project_id}" if al_capturer.ls_enabled else "LS off"
+        print(f"[AC] enabled — hot_dir={al_capturer.out_dir}  thr={al_capturer.threshold}  "
               f"cooldown={al_capturer.cooldown_s}s  cap={al_capturer.max_per_hour}/h  "
-              f"mature={mature_str}")
+              f"std≥{al_capturer.glitch_min_std}  lapvar≥{al_capturer.lapvar_threshold}  "
+              f"retain={al_capturer.retention_days}d  mature={mature_str}  {ls_str}")
 
     # --- Tracker ---
     tracker = CentroidTracker()
@@ -1651,6 +1792,8 @@ def main():
 
     frame_idx        = 0
     fps_display      = 0.0
+    inf_ms_display   = 0.0      # EMA of pure detector.detect() latency (ms)
+    _last_perf_log   = 0.0      # wall-clock of last [PERF] stdout line
     last_model_check = time.time()
     raw_key          = -1
     _reconnect_n     = 0        # consecutive failed reads; reset on success
@@ -1839,7 +1982,10 @@ def main():
                     detector.load(active_cfg, active_weights, names_file, use_gpu=not args.cpu)
 
         # --- Run detection (skip ROI mask for detection; filter in tracker update) ---
+        _inf_t0 = time.perf_counter()
         dets = detector.detect(frame)
+        _inf_ms = (time.perf_counter() - _inf_t0) * 1000.0
+        inf_ms_display = 0.9 * inf_ms_display + 0.1 * _inf_ms
 
         # Filter detections by ROI
         if scene_cfg.roi_enabled and scene_cfg.roi_pts:
@@ -1912,6 +2058,17 @@ def main():
 
             draw_scene_overlay(frame, scene_cfg, ui)
             draw_count_panel(frame, class_counts, fps_display, scene_cfg.lanes, day_mode)
+
+            # --- Realtime-performance readout (top-right) ---
+            _ratio   = fps_display / src_fps if src_fps > 0 else 0.0
+            _ok      = fps_display >= 0.90 * src_fps
+            _status  = "REALTIME OK" if _ok else f"BEHIND {_ratio:.2f}x"
+            _perf_txt = (f"proc {fps_display:4.1f} / src {src_fps:.0f} fps"
+                         f"  inf {inf_ms_display:.0f} ms  {_status}")
+            _perf_col = (90, 200, 90) if _ok else (0, 90, 255)   # BGR: green / red
+            (_pw, _), _ = cv2.getTextSize(_perf_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+            _put(frame, _perf_txt, frame_w - _pw - 12, 28, 0.55, _perf_col)
+
             if not args.nowin:
                 if ui.mode == UIMode.CAMERA_INPUT:
                     draw_camera_panel(frame, ui, input_str)
@@ -1965,9 +2122,25 @@ def main():
             scene_cfg.save()
             ui.need_save = False
 
+        # --- Real-time pacing: hold one source-frame of wall-clock per iteration ---
+        if not args.no_pace and src_fps > 0:
+            _budget = (args.skip if args.skip > 1 else 1) / src_fps
+            _work   = time.perf_counter() - t0
+            if _work < _budget:
+                time.sleep(_budget - _work)
+
         # --- FPS ---
         elapsed = time.perf_counter() - t0
         fps_display = 0.9 * fps_display + 0.1 * (1.0 / max(elapsed, 1e-6))
+
+        # --- Realtime-performance log (every ~2s; also covers headless --nowin) ---
+        _now = time.time()
+        if _now - _last_perf_log >= 2.0:
+            _last_perf_log = _now
+            _r = fps_display / src_fps if src_fps > 0 else 0.0
+            _st = "REALTIME-OK" if fps_display >= 0.90 * src_fps else f"BEHIND({_r:.2f}x)"
+            print(f"[PERF] proc={fps_display:.1f}fps src={src_fps:.0f}fps "
+                  f"inf={inf_ms_display:.0f}ms {_st}", flush=True)
 
         # --- Live stats ---
         stats_writer.tick(fps_display, frame_idx, tracks, class_counts, scene_cfg, frame_dets,
@@ -1981,7 +2154,9 @@ def main():
             print(f"[SWITCH] Now using: {stats_writer.model_name}")
 
         # --- Command file (model switch from terminal) ---
-        _cmd_path = os.path.join(os.path.dirname(os.path.abspath(args.stats)), "model_cmd.txt")
+        # Canonical IPC location: logs/model_cmd.txt (matches switch_model.py),
+        # independent of where --stats points.
+        _cmd_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "model_cmd.txt")
         if os.path.exists(_cmd_path) and (_sw_thread is None or not _sw_thread.is_alive()):
             try:
                 with open(_cmd_path) as _f:

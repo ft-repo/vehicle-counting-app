@@ -8,12 +8,12 @@
         663
       ],
       [
-        1240,
-        208
+        1233,
+        180
       ],
       [
-        1163,
-        201
+        1084,
+        179
       ],
       [
         10,
@@ -58,8 +58,8 @@
       "line": {
         "x1": 938,
         "y1": 713,
-        "x2": 1260,
-        "y2": 740
+        "x2": 1312,
+        "y2": 743
       },
       "direction": "both",
       "arrow_in": "top_to_bottom",
@@ -72,10 +72,10 @@
       "enabled": true,
       "color": "#FF00FF",
       "line": {
-        "x1": 670,
-        "y1": 696,
-        "x2": 409,
-        "y2": 675
+        "x1": 675,
+        "y1": 694,
+        "x2": 301,
+        "y2": 655
       },
       "direction": "both",
       "arrow_in": "top_to_bottom",
@@ -89,21 +89,43 @@
     "height": 960
   },
   "yolo": {
-    "onnx": "model_compare/yolov8n/run5/weights/best.onnx",
-    "names": "models/coco_drr7.names",
+    "onnx": "model_compare/yolo26n/run4/weights/best.onnx",
+    "names": "models/traffic14.names",
     "cfg": "models/yolov4-tiny-drr7-day.cfg",
     "weights": "models/yolov4-tiny-drr7-day.weights",
     "input_size": 416,
     "conf": 0.2,
     "nms": 0.4
   },
-  "active_learning": {
-    "enabled": true,
+  "auto_capture": {
+    "enabled": false,
     "hot_dir": "~/auto_capture",
     "confidence_threshold": 0.6,
     "cooldown_s": 5.0,
     "max_per_hour": 200,
     "jpeg_quality": 90,
-    "mature_classes": ["car", "bike", "truck", "bus", "taxi", "pickup"]
-  }
+    "lapvar_threshold": 100,
+    "glitch_min_std": 8.0,
+    "retention_days": 0,
+    "write_sidecar": false,
+    "mature_classes": [
+      "car",
+      "bike",
+      "truck",
+      "bus",
+      "taxi",
+      "pickup"
+    ],
+    "label_studio": {
+      "enabled": true,
+      "url": "https://label.enixma.net",
+      "project_id": 2,
+      "token_env": "LS_API_TOKEN"
+    }
+  },
+  "model_presets": [
+    { "label": "YOLO26n run4", "onnx": "model_compare/yolo26n/run4/weights/best.onnx", "names": "models/traffic14.names", "input_size": 416 },
+    { "label": "YOLOv8n run5 (legacy bench)", "onnx": "model_compare/yolov8n/run5/weights/best.onnx", "names": "models/coco_drr7.names", "input_size": 416 },
+    { "label": "YOLO11n run2 (legacy bench)", "onnx": "model_compare/yolo11n/run2/weights/best.onnx", "names": "models/coco_drr7.names", "input_size": 416 }
+  ]
 }

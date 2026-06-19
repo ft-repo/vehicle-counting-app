@@ -1,0 +1,34 @@
+{
+  "_comment": "SINGLE SOURCE OF TRUTH for the canonical/deployed model. Tooling (run_val.py, auto_label.py, backfill_per_class.py) and the runtime hot-swap presets resolve from here, so 'which model are we running?' lives in exactly ONE place. Paths are relative to the repo root. Update this file when a new training run is promoted to deployed. NOTE: the .pt of the deployed run lives on the DGX (the training host); only the .onnx is mirrored to the Mac for runtime inference, so .pt-based tools (val/label) run where the .pt exists.",
+  "deployed": {
+    "label": "yolo26n run4",
+    "family": "yolo26n",
+    "run": "run4",
+    "onnx": "model_compare/yolo26n/run4/weights/best.onnx",
+    "pt": "runs/yolo26n/run4/weights/best.pt",
+    "names": "models/traffic14.names",
+    "input_size": 416,
+    "model_type": "yolo26n_e2e",
+    "val_results": "runs/yolo26n/run4/val_results.json"
+  },
+  "presets": [
+    {
+      "label": "YOLO26n run4",
+      "onnx": "model_compare/yolo26n/run4/weights/best.onnx",
+      "names": "models/traffic14.names",
+      "input_size": 416
+    },
+    {
+      "label": "YOLOv8n run5 (legacy bench)",
+      "onnx": "model_compare/yolov8n/run5/weights/best.onnx",
+      "names": "models/coco_drr7.names",
+      "input_size": 416
+    },
+    {
+      "label": "YOLO11n run2 (legacy bench)",
+      "onnx": "model_compare/yolo11n/run2/weights/best.onnx",
+      "names": "models/coco_drr7.names",
+      "input_size": 416
+    }
+  ]
+}

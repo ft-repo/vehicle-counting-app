@@ -84,8 +84,8 @@ def main():
     )
     p.add_argument("--config", default="config/scene_config.json",
                    help="scene_config.json (default: config/scene_config.json)")
-    p.add_argument("--stats",  default="live_stats.json",
-                   help="Live stats output JSON (default: live_stats.json)")
+    p.add_argument("--stats",  default="logs/live_stats.json",
+                   help="Live stats output JSON (default: logs/live_stats.json)")
     p.add_argument("--source", default="",
                    help="Camera URL / file path (overrides config if set)")
     p.add_argument("--gpu",   action="store_true", help="Force GPU / CUDA backend")
@@ -93,6 +93,8 @@ def main():
     p.add_argument("--nowin", action="store_true", help="Headless mode (no display window)")
     p.add_argument("--skip",  type=int, default=1,
                    help="Process 1 out of every N frames (default 1). Use --skip 2 or --skip 3 to reduce lag on slow hardware.")
+    p.add_argument("--no-pace", dest="no_pace", action="store_true",
+                   help="Disable real-time pacing; consume frames as fast as possible (offline export / benchmarking).")
     args = p.parse_args()
 
     config_path = ROOT / args.config
@@ -140,6 +142,7 @@ def main():
     if args.gpu:         counter_cmd.append("--gpu")
     if args.cpu:         counter_cmd.append("--cpu")
     if args.nowin:       counter_cmd.append("--nowin")
+    if args.no_pace:     counter_cmd.append("--no-pace")
     if args.skip > 1:    counter_cmd += ["--skip", str(args.skip)]
 
     try:

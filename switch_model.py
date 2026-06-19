@@ -1,32 +1,43 @@
 """
 Switch the active model while vehicle_counter.py is running.
 
-Usage (run in any terminal from Label Test folder):
-    python counting_app/switch_model.py 1   → YOLOv4-tiny
-    python counting_app/switch_model.py 2   → YOLO26n run1   (primary, NMS-free)
-    python counting_app/switch_model.py 3   → YOLOv8n run5   (legacy / bench)
-    python counting_app/switch_model.py 4   → YOLO11n run2   (legacy / bench)
-"""
-import sys
-import os
+Writes the chosen preset number to repo-root/model_cmd.txt; vehicle_counter.py
+polls that file once a second and hot-swaps without a restart. The preset list
+is read from config/scene_config.json -> model_presets (the same source the
+runtime uses), so the numbering here always matches what gets loaded.
 
-LABELS = {
-    "1": "YOLOv4-tiny",
-    "2": "YOLO26n run1",
-    "3": "YOLOv8n run5",
-    "4": "YOLO11n run2",
-}
+Usage (run from the repo root, in any terminal):
+    python switch_model.py 1     # first preset
+    python switch_model.py 2     # ...
+"""
+import json
+import os
+import sys
+
+ROOT  = os.path.dirname(os.path.abspath(__file__))
+SCENE = os.path.join(ROOT, "config", "scene_config.json")
+
+try:
+    _presets = json.load(open(SCENE)).get("model_presets", [])
+except Exception:
+    _presets = []
+LABELS = {str(i + 1): p.get("label", f"preset {i + 1}") for i, p in enumerate(_presets)}
+
+if not LABELS:
+    print("No model_presets found in config/scene_config.json — nothing to switch to.")
+    sys.exit(1)
 
 if len(sys.argv) < 2 or sys.argv[1] not in LABELS:
-    print("Usage: python counting_app/switch_model.py 1|2|3|4")
+    print("Usage: python switch_model.py <n>")
     for k, v in LABELS.items():
         print(f"  {k} = {v}")
     sys.exit(1)
 
 num = sys.argv[1]
-cmd_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "model_cmd.txt")
+cmd_path = os.path.join(ROOT, "logs", "model_cmd.txt")
+os.makedirs(os.path.dirname(cmd_path), exist_ok=True)
 with open(cmd_path, "w") as f:
     f.write(num)
 
-print(f"[SWITCH] Sent → model {num}: {LABELS[num]}")
-print(f"[SWITCH] vehicle_counter.py will pick this up within 1 second.")
+print(f"[SWITCH] Sent → preset {num}: {LABELS[num]}")
+print("[SWITCH] vehicle_counter.py will pick this up within 1 second.")
