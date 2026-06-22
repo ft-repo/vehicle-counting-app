@@ -94,22 +94,42 @@ quiet-snapshot, resolves as you run more scoring sessions).
 
 Outputs: `labeling_list.csv` (TRAIN) + `validation_holdout.csv` (VAL).
 
-## Intern handoff
+## Train vs validation — why the split
+
+- **Train (`labeling_list.csv`)** — cameras the model **learns from**. Label
+  their frames; the model tunes its weights to fit those labels. It sees these
+  images during training.
+- **Validation (`validation_holdout.csv`)** — cameras the model **never trains
+  on**. Labeled too, but only used *after* training to measure how well the
+  model does on cameras it has never seen — i.e. how it will behave on the other
+  ~950 cameras in the field.
+
+Why it matters: a model can *memorize* its training data and score great on it
+while being useless on anything new (overfitting). The val score is the honesty
+check — it can't be faked by memorizing, because those cameras were held out.
+
+The split is **camera-level, not frame-level** (no camera in both — the
+`overlap = 0` check). If one camera had frames in both train and val, the model
+would already know that viewpoint/lighting/road and the val score would be
+inflated. Whole-camera holdout = a true generalization test.
+
+## Labeling steps
 
 1. For each camera in `labeling_list.csv`, pull training frames
    (`tools/frame_extractor.py` takes the stream URL).
 2. **Weight the confused pairs** — choose frames with trucks/buses/pickups/taxis
-   present, not empty road. Prioritize `label_priority = high` (VP02).
-3. Auto-label → **intern review every label** → merge into the run7 train split.
+   present, not empty road. Work top-down by `label_priority` (high first).
+3. Auto-label → **review every label** → merge into the run7 train split.
 4. Cameras in `validation_holdout.csv` get labeled too, but their frames are
    **never trained on** — they are the unseen-camera validation set.
 5. Track progress in the `labeled` / `frames_pulled` / `notes` columns.
 
 ## run7 payoff check
 
-Train on the 56, validate on the 39 unseen cameras, and watch the
-**car↔pickup / truck↔bus / taxi↔car off-diagonals on the VP02 val subset** —
-that number tells you whether run7 actually fixed the confusion.
+Train on the 60, validate on the 35 unseen cameras, and watch the
+**car↔pickup / truck↔bus / taxi↔car off-diagonals on the validation cameras** —
+that number (on cameras run7 never trained on) tells you whether the confusion
+is actually fixed, not just memorized.
 
 ## Files
 

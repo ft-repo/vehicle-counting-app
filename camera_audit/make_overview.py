@@ -78,8 +78,8 @@ def annotate(img, c, idx, total, thumb=False):
     return img
 
 
-def build_video(cams):
-    path = str(OUT / "cameras_overview.mp4")
+def build_video(cams, fname):
+    path = str(OUT / fname)
     vw = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), FPS, (VID_W, VID_H))
     n = len(cams)
     for i, c in enumerate(cams, 1):
@@ -90,7 +90,7 @@ def build_video(cams):
         for _ in range(SECS_PER_CAM * FPS):
             vw.write(frame)
     vw.release()
-    return path
+    return path, n
 
 
 def build_contact_sheets(cams):
@@ -115,10 +115,17 @@ def build_contact_sheets(cams):
 def main():
     cams = load_cameras()
     print(f"cameras with frames: {len(cams)}")
-    vid = build_video(cams)
+    train = [c for c in cams if c["split"] == "TRAIN"]
+    val = [c for c in cams if c["split"] == "VAL"]
+    vids = [
+        build_video(cams, "cameras_overview.mp4"),
+        build_video(train, "cameras_TRAIN.mp4"),
+        build_video(val, "cameras_VAL.mp4"),
+    ]
     sheets = build_contact_sheets(cams)
     print(f"\n=== OVERVIEW BUILT (local) ===")
-    print(f"  video        : {vid}  ({len(cams)} cams x {SECS_PER_CAM}s)")
+    for path, n in vids:
+        print(f"  {Path(path).name:24s} {n} cams x {SECS_PER_CAM}s")
     print(f"  contact sheets: {len(sheets)} page(s) in {OUT}/")
     print(f"  green border=high priority, yellow=medium, red=low/empty")
 
