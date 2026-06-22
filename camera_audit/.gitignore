@@ -7,6 +7,7 @@ cameras.xlsx
 labeling_list.csv
 validation_holdout.csv
 angle_discovery/
+overview/
 diversity_tally.json
 diversity_scores.csv
 angle_run.log
