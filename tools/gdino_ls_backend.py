@@ -43,7 +43,7 @@ from urllib.parse import unquote, urlparse
 from label_studio_ml.model import LabelStudioMLBase
 
 ROOT        = Path(__file__).parent.parent
-CONFIG_PATH = ROOT / "configs" / "pipeline_config.yaml"
+CONFIG_PATH = ROOT / "config" / "pipeline_config.yaml"
 
 # ── keyword → class label ───────────────────────────────────────────────────
 # Built once from config. Maps DINO's returned phrases to your class names.
@@ -51,18 +51,18 @@ CONFIG_PATH = ROOT / "configs" / "pipeline_config.yaml"
 def _build_phrase_map(class_prompts: dict, class_names: dict | None = None) -> dict:
     """Build a phrase → class-name lookup.
 
-    `class_names` is the YAML-driven id → name mapping (post-2026-05-08 it's
-    12-class traffic12 order). If omitted, falls back to the legacy 11-class
-    hardcoded mapping for backward compatibility — but new deployments should
-    always pass it explicitly.
+    `class_names` is the YAML-driven id → name mapping (config/pipeline_config.yaml,
+    canonical 14-class traffic14 order). It is REQUIRED — there is deliberately no
+    hardcoded fallback, because the old legacy 11-class person-first default
+    silently mislabelled whenever a newer-schema model was in use.
     """
     phrase_map: dict[str, str] = {}
     if not class_names:
-        class_names = {
-            0: "person", 1: "car",    2: "bike",      3: "truck",
-            4: "bus",    5: "taxi",   6: "pickup",    7: "trailer",
-            8: "tuktuk", 9: "agri_truck", 10: "van",
-        }
+        raise SystemExit(
+            "[FATAL] gdino_ls_backend: no class_names provided. Refusing to fall "
+            "back to the legacy 11-class person-first order (silent mislabel "
+            "landmine). Provide class_names from config/pipeline_config.yaml."
+        )
     for class_id, prompt in class_prompts.items():
         label = class_names.get(int(class_id), f"class_{class_id}")
         for keyword in prompt.split(" . "):

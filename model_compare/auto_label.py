@@ -18,6 +18,9 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo root
+from model_compare.registry import deployed_pt   # noqa: E402
+
 from ultralytics import YOLO
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
@@ -28,9 +31,11 @@ from rich import box
 # ─────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────
-DEFAULT_MODEL = "runs/yolo26n/run1/weights/best.pt"
+DEFAULT_MODEL = str(deployed_pt())   # canonical model — see models/model_registry.json
 DEFAULT_CONF  = 0.40   # discard detections below this
-CLASS_NAMES   = ['person','car','bike','truck','bus','taxi','pickup','trailer','tuktuk','agri_truck','van']
+# Class names are read from the MODEL at load time (model.names) — the only true
+# authority on what its class ids mean — never a hardcoded list (that was the
+# 11-class person-first mislabel landmine). See main().
 IMG_EXTS      = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 console = Console()
@@ -125,8 +130,19 @@ def main():
     model = YOLO(str(model_path))
     console.print("[green]Model loaded.[/green]\n")
 
+    # Class names come from the MODEL (authority on what its ids mean), not a
+    # hardcoded list. Warn loudly if they diverge from the canonical schema —
+    # that means a stale (e.g. 11-class person-first) model is loaded.
+    class_names = list(model.names.values())
+    canon_file  = Path(__file__).resolve().parent.parent / "models" / "traffic14.names"
+    if canon_file.exists():
+        canon = [n.strip() for n in canon_file.read_text().splitlines() if n.strip()]
+        if class_names != canon:
+            console.print(f"[yellow]⚠ model class order does NOT match canonical "
+                          f"{canon_file.name}; labels use the MODEL's order.[/yellow]\n")
+
     # ── Run inference ──
-    stats          = {name: 0 for name in CLASS_NAMES}
+    stats          = {name: 0 for name in class_names}
     labeled_count  = 0    # images that got ≥1 box
     total_boxes    = 0
     skipped_nodet  = 0    # images with 0 detections above threshold
@@ -153,8 +169,8 @@ def main():
                 for box in results[0].boxes:
                     if float(box.conf[0]) >= args.conf:
                         cls_id = int(box.cls[0])
-                        if cls_id < len(CLASS_NAMES):
-                            stats[CLASS_NAMES[cls_id]] += 1
+                        if cls_id < len(class_names):
+                            stats[class_names[cls_id]] += 1
             else:
                 skipped_nodet += 1
 
@@ -170,7 +186,7 @@ def main():
     t.add_column("Boxes",       style="cyan",   width=10, justify="right")
     t.add_column("Status",      width=18)
 
-    for name in CLASS_NAMES:
+    for name in class_names:
         count = stats[name]
         if count == 0:
             status = "[dim]—[/dim]"

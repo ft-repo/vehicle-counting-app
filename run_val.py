@@ -5,17 +5,21 @@ Default points at the latest YOLO26n training run. On the DGX, dataset lives at
 appropriately or rely on the env var VEHICLE_DATASET.
 
 Usage:
-    python counting_app/run_val.py
-    python counting_app/run_val.py --model runs/yolo26n/run1/weights/best.pt
+    python run_val.py                                   # uses the deployed model
+    python run_val.py --model <path/to/best.pt>         # override
 """
 import argparse
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-DEFAULT_MODEL = ROOT / "runs/yolo26n/run1/weights/best.pt"
+ROOT = Path(__file__).resolve().parent          # repo root (this file lives at the root)
+sys.path.insert(0, str(ROOT))
+from model_compare.registry import deployed_pt  # noqa: E402 — needs ROOT on sys.path
+
+DEFAULT_MODEL = deployed_pt()                    # canonical model — see models/model_registry.json
 DEFAULT_DATA  = Path(os.environ.get("VEHICLE_DATASET_YAML",
                                     str(ROOT / "new_data/dataset/data.yaml")))
 OUT_PATH      = ROOT / "val_results.json"

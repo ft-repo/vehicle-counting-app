@@ -12,9 +12,9 @@ that's already there.
 Usage
 -----
     python tools/backfill_per_class.py \\
-        --weights runs/yolo26n/run1/weights/best.pt \\
         --data    /home/admin/cv_counting/data/data.yaml \\
-        --out     runs/yolo26n/run1/val_results.json \\
+        --out     runs/yolo26n/run4/val_results.json \\
+        [--weights <path/to/best.pt>]   # default: deployed model from the registry
         [--imgsz 416] [--device cpu]
 
 After it runs, `level_gate.load_per_class_levels()` will return a populated
@@ -28,10 +28,14 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo root
+from model_compare.registry import deployed_pt   # noqa: E402
+
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--weights", required=True)
+    p.add_argument("--weights", default=None,
+                   help="model .pt (default: deployed model from the registry)")
     p.add_argument("--data",    required=True)
     p.add_argument("--out",     required=True)
     p.add_argument("--imgsz",   type=int, default=416)
@@ -45,7 +49,7 @@ def main() -> int:
         print("ultralytics not installed in this Python; activate yolo-env first.", file=sys.stderr)
         return 2
 
-    weights = Path(args.weights)
+    weights = Path(args.weights) if args.weights else deployed_pt()
     if not weights.exists():
         print(f"weights not found: {weights}", file=sys.stderr)
         return 2

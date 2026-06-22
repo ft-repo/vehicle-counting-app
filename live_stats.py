@@ -2,8 +2,8 @@
 Vehicle Detection System — Live Dashboard
 iOS-inspired clean terminal UI.
 
-Run alongside run_camera.sh in a separate terminal:
-    python counting_app/live_stats.py
+Run alongside run_camera.py in a separate terminal:
+    python live_stats.py
 """
 
 import argparse
@@ -56,7 +56,12 @@ def load_class_accuracy() -> dict:
         pass
     return {}, None, ""
 
-# ── Dataset targets (traffic14 schema — 2026-05-11) ────────────────────────────
+# ── Dataset targets (traffic14 schema — order locked to LS canonical 2026-05-23) ──
+# Canonical tail: 11 agri_truck, 12 agri_vehicle, 13 ambulance (matches LS Project 2 + traffic14.names).
+# `agri_truck` is class 11 in the *data_traffic12* training set (named `agriculture` there).
+# `agri_vehicle` (12) and `ambulance` (13) are reserved for the deferred 14-class retrain — kept here
+# so dataset-progress targets stay visible. The deployed run4 uses the full 14-class schema.
+# ambulance is count+display in production; agri_truck/agri_vehicle are SKIP (excluded from counting).
 CLASSES_STATUS = {
     "car":          (26115, 26115, 60, 30),
     "bike":         (8596,  8596,  60, 30),
@@ -70,14 +75,17 @@ CLASSES_STATUS = {
     "tuktuk":       (37,    500,  30, 15),
     "van":          (0,     500,  30, 15),
     "agri_truck":   (0,     500,  30, 15),
-    "ambulance":    (0,     500,  30, 15),
     "agri_vehicle": (0,     500,  30, 15),
+    "ambulance":    (0,     500,  30, 15),
 }
 
 KNOWN_RESULTS = {
-    # Primary — YOLO26n (NMS-free, edge-optimised). Trained on the DGX from 2026-05-08.
-    "yolo26n run1":  ROOT / "runs/yolo26n/run1/results.csv",
-    "yolo26n run2":  ROOT / "runs/yolo26n/run2/results.csv",
+    # Primary — YOLO26n run4 (deployed, 14-class). See models/model_registry.json.
+    "yolo26n run4":   ROOT / "runs/yolo26n/run4/results.csv",
+    "yolo26n run3-2": ROOT / "runs/yolo26n/run3-2/results.csv",
+    "yolo26n run3":   ROOT / "runs/yolo26n/run3/results.csv",
+    "yolo26n run2":   ROOT / "runs/yolo26n/run2/results.csv",
+    "yolo26n run1":   ROOT / "runs/yolo26n/run1/results.csv",
     # Legacy / bench
     "yolov8n run5":  ROOT / "runs/detect/model_compare/yolov8n/run5/results.csv",
     "yolov8n run6":  ROOT / "runs/detect/model_compare/yolov8n/run6/results.csv",
@@ -164,7 +172,7 @@ def model_from_onnx(onnx: str) -> str:
     # YOLO26n is the primary; v8 / 11 kept for legacy comparison
     for arch in ("yolo26n", "yolo26s", "yolov8n", "yolov8s", "yolo11n", "yolo11s"):
         if arch in p:
-            m = re.search(r'/(run\d+)/', p)
+            m = re.search(r'/(run\d+(?:-\d+)?)/', p)
             return f"{arch} {m.group(1)}" if m else arch
     return "unknown"
 
@@ -276,16 +284,15 @@ def build_accuracy_panel(label: str, rcsv: Path | None) -> Panel:
 
 def build_comparison_panel(active_label: str) -> Panel:
     PRESETS = [
-        ("1", "yolov4-tiny",  KNOWN_RESULTS.get("yolov4-tiny")),
-        ("2", "yolo26n run1", KNOWN_RESULTS.get("yolo26n run1")),
-        ("3", "yolov8n run5", KNOWN_RESULTS.get("yolov8n run5")),
-        ("4", "yolo11n run2", KNOWN_RESULTS.get("yolo11n run2")),
+        ("1", "yolo26n run4",   KNOWN_RESULTS.get("yolo26n run4")),
+        ("2", "yolov8n run5",   KNOWN_RESULTS.get("yolov8n run5")),
+        ("3", "yolo11n run2",   KNOWN_RESULTS.get("yolo11n run2")),
     ]
 
     t = Table(box=None, show_header=True, header_style=C_DIM,
               padding=(0, 2))
     t.add_column("",         width=4,  style=C_DIM)
-    t.add_column("Model",    width=14)
+    t.add_column("Model",    width=16)
     t.add_column("mAP50",    width=8,  justify="right")
     t.add_column("Prec",     width=7,  justify="right")
     t.add_column("Recall",   width=8,  justify="right")
@@ -321,7 +328,7 @@ def build_comparison_panel(active_label: str) -> Panel:
                       Text("—", style=C_DIM), Text("—", style=C_DIM),
                       status_t)
 
-    subtitle = "[dim]Switch:  python counting_app/switch_model.py 1 | 2 | 3[/dim]"
+    subtitle = "[dim]Switch:  python switch_model.py 1 | 2 | 3[/dim]"
     return Panel(t,
                  title=f"[{C_ACCENT}]Models[/{C_ACCENT}]  {subtitle}",
                  border_style=C_BORDER, box=box.ROUNDED, padding=(0, 2))
@@ -475,8 +482,8 @@ def build_dataset_panel() -> Panel:
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--stats",   default="live_stats.json")
-    p.add_argument("--config",  default="counting_app/config/scene_config.json")
+    p.add_argument("--stats",   default="logs/live_stats.json")
+    p.add_argument("--config",  default="config/scene_config.json")
     p.add_argument("--results", default="")
     return p.parse_args()
 
@@ -493,7 +500,7 @@ def resolve_model(args, live_model: str | None) -> tuple[str, Path | None]:
             if onnx: label = model_from_onnx(onnx)
         except Exception:
             pass
-    label = label or "yolo26n run1"
+    label = label or "yolo26n run4"
     return label, find_results(label)
 
 
@@ -511,7 +518,7 @@ def main():
     console.print()
     time.sleep(0.5)
 
-    last_label = "yolo26n run1"
+    last_label = "yolo26n run4"
     last_rcsv: Path | None = None
 
     with Live(console=console, refresh_per_second=2) as live:
