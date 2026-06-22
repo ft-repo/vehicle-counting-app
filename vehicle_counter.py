@@ -80,6 +80,15 @@ def _win32_client_size(title: str):
 IOU_MATCH_THRESH = 0.30
 MAX_LOST_FRAMES  = 30
 MIN_HIT_STREAK   = 2
+# Fast-vehicle tracking (motion-aware association + confidence-weighted class vote).
+# Fast vehicles smear (motion blur -> wrong class) and their box can fail to overlap
+# its own previous box frame-to-frame (-> IoU match fails -> track lost -> uncounted).
+MAX_VEL_FACTOR    = 1.5   # clamp per-frame velocity to 1.5x box dim (anti-fling)
+MAX_PREDICT_STEPS = 3     # predict at most N frames ahead when re-acquiring a lost track
+DIST_GATE_FACTOR  = 1.0   # fallback association gate radius = 1.0x box dim
+FAST_SPEED_FRAC   = 0.5   # a track is "fast" once it moves >0.5x its box dim per frame
+CLASS_VOTE_DECAY  = 0.9   # recent-weighted confidence vote (1.0 = full-track; tune on a
+                          # fast/blurred clip, NOT a normal one where last-frame is clearest)
 
 # Classes to exclude from counting and display
 SKIP_CLASSES: set = {"agriculture", "agri_truck", "agri_vehicle"}
@@ -295,17 +304,35 @@ class Track:
         self.rect        = det.rect
         self.center      = det.centroid()
         self.prev_center = det.centroid()
-        self.class_id    = det.class_id
+        self.velocity    = (0.0, 0.0)                          # EMA centroid motion, px/frame
+        self._class_votes = {det.class_id: det.confidence}     # confidence-weighted class tally
         self.confidence  = det.confidence
         self.hit_streak  = 1
         self.lost_frames = 0
         self.counted_lanes: Set[int] = set()
 
+    @property
+    def class_id(self) -> int:
+        # Voted class = the class with the most summed confidence over the track's life.
+        # A blurred frame is also a low-confidence frame, so it carries little weight —
+        # this stops one bad frame from overwriting the correct class (the old "last wins").
+        return max(self._class_votes, key=self._class_votes.get)
+
     def update(self, det: Detection):
+        new_center = det.centroid()
+        # Per-frame velocity from the real observed centroids (divide by the gap so a
+        # re-acquired track after N lost frames isn't over-estimated), EMA-smoothed.
+        frames_elapsed = self.lost_frames + 1
+        inst_vx = (new_center[0] - self.center[0]) / frames_elapsed
+        inst_vy = (new_center[1] - self.center[1]) / frames_elapsed
+        self.velocity = (0.5 * self.velocity[0] + 0.5 * inst_vx,
+                         0.5 * self.velocity[1] + 0.5 * inst_vy)
         self.prev_center = self.center
         self.rect        = det.rect
-        self.center      = det.centroid()
-        self.class_id    = det.class_id
+        self.center      = new_center
+        # Confidence-weighted class vote with mild decay so recent clear frames dominate.
+        self._class_votes = {c: v * CLASS_VOTE_DECAY for c, v in self._class_votes.items()}
+        self._class_votes[det.class_id] = self._class_votes.get(det.class_id, 0.0) + det.confidence
         self.confidence  = det.confidence
         self.hit_streak += 1
         self.lost_frames = 0
@@ -314,6 +341,30 @@ class Track:
         self.prev_center = self.center
         self.lost_frames += 1
         self.hit_streak  = 0
+
+    def predicted_rect(self) -> Tuple[int,int,int,int]:
+        # Box shifted along the (clamped) velocity to where the vehicle should be now —
+        # 1 frame past the last hit, plus any lost frames (capped). Lets a fast box that
+        # moved past its own previous position still overlap the new detection.
+        x, y, w, h = self.rect
+        vx, vy = self.velocity
+        max_step = MAX_VEL_FACTOR * max(w, h)
+        mag = (vx * vx + vy * vy) ** 0.5
+        if mag > max_step and mag > 0:
+            vx, vy = vx * max_step / mag, vy * max_step / mag
+        steps = min(self.lost_frames + 1, MAX_PREDICT_STEPS)
+        return (int(x + vx * steps), int(y + vy * steps), w, h)
+
+    def predicted_center(self) -> Tuple[float,float]:
+        px, py, w, h = self.predicted_rect()
+        return (px + w * 0.5, py + h * 0.5)
+
+    def is_fast(self) -> bool:
+        # Fast = moving more than half its own box per frame, i.e. the regime where
+        # frame-to-frame IoU starts to fail. Only fast tracks get the motion fallbacks.
+        vx, vy = self.velocity
+        _, _, w, h = self.rect
+        return (vx * vx + vy * vy) ** 0.5 > FAST_SPEED_FRAC * max(w, h)
 
 
 class CentroidTracker:
@@ -327,6 +378,9 @@ class CentroidTracker:
         det_used = [False] * len(dets)
         trk_used = [False] * len(self.tracks)
 
+        # Pass 1a — ORIGINAL raw-box IoU, unchanged. Runs first so every match the
+        # baseline tracker would make is preserved exactly (dense/normal traffic counts
+        # identically — the motion logic below can only ADD recoveries, never steal a match).
         for ti, trk in enumerate(self.tracks):
             best_iou = self.iou_thresh
             best_di  = -1
@@ -337,6 +391,55 @@ class CentroidTracker:
                 if score > best_iou:
                     best_iou = score
                     best_di  = di
+            if best_di >= 0:
+                self.tracks[ti].update(dets[best_di])
+                det_used[best_di] = True
+                trk_used[ti]      = True
+
+        # Pass 1b — recover STILL-UNMATCHED FAST tracks via the velocity-PREDICTED box,
+        # using only LEFTOVER detections. A fast vehicle whose raw box missed its own
+        # detection gets re-associated instead of spawning a duplicate track. Restricted
+        # to fast tracks so dense normal traffic can't hijack a neighbour's detection.
+        for ti, trk in enumerate(self.tracks):
+            if trk_used[ti] or not self.tracks[ti].is_fast():
+                continue
+            pred = trk.predicted_rect()
+            best_iou = self.iou_thresh
+            best_di  = -1
+            for di, det in enumerate(dets):
+                if det_used[di]:
+                    continue
+                score = rect_iou(pred, det.rect)
+                if score > best_iou:
+                    best_iou = score
+                    best_di  = di
+            if best_di >= 0:
+                self.tracks[ti].update(dets[best_di])
+                det_used[best_di] = True
+                trk_used[ti]      = True
+
+        # Pass 2 — last resort for unmatched FAST tracks only: nearest leftover detection
+        # within a scale-relative gate AND in the track's direction of travel. Slow/normal
+        # tracks never reach here, so the baseline is untouched.
+        for ti, trk in enumerate(self.tracks):
+            if trk_used[ti] or not self.tracks[ti].is_fast():
+                continue
+            pcx, pcy = trk.predicted_center()
+            _, _, w, h = trk.rect
+            vx, vy = trk.velocity
+            best_dist = DIST_GATE_FACTOR * max(w, h)
+            best_di   = -1
+            for di, det in enumerate(dets):
+                if det_used[di]:
+                    continue
+                dcx, dcy = det.centroid()
+                dist = ((dcx - pcx) ** 2 + (dcy - pcy) ** 2) ** 0.5
+                if dist >= best_dist:
+                    continue
+                if vx * (dcx - trk.center[0]) + vy * (dcy - trk.center[1]) <= 0:
+                    continue  # candidate must be ahead, in the direction of travel
+                best_dist = dist
+                best_di   = di
             if best_di >= 0:
                 self.tracks[ti].update(dets[best_di])
                 det_used[best_di] = True
@@ -1021,7 +1124,7 @@ def draw_mode_hud(frame: np.ndarray, ui: UIState, cfg: SceneCfg):
         badge     = "EDIT MODE"
         badge_col = C_TEAL
         rows = [
-            ("[R]",       "Draw ROI",        C_ORANGE),
+            ("[R]",       "Reset ROI box",   C_ORANGE),
             ("[L]",       "Add lane",        C_LIME),
             ("[D]",       "Delete lane",     C_GRAY),
             ("[C]",       "Clear ROI",       C_GRAY),
@@ -1237,6 +1340,21 @@ def _ios_panel(frame: np.ndarray, x: int, y: int, w: int, h: int,
 def _put(frame, text, x, y, scale, color, thickness=1):
     cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX,
                 scale, color, thickness, cv2.LINE_AA)
+
+
+def _screen_size_pts():
+    """Logical screen size in points, or None if it can't be determined."""
+    try:
+        import tkinter
+        r = tkinter.Tk()
+        r.withdraw()
+        w, h = r.winfo_screenwidth(), r.winfo_screenheight()
+        r.destroy()
+        if w > 0 and h > 0:
+            return w, h
+    except Exception:
+        pass
+    return None
 
 
 def draw_count_panel(frame: np.ndarray,
@@ -1657,10 +1775,23 @@ def main():
     src_fps  = cap.get(cv2.CAP_PROP_FPS)
     if src_fps <= 0 or src_fps > 200:
         src_fps = 25.0
-    frame_w  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_h  = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    src_w    = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    src_h    = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_fr = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    print(f"[INFO] Video: {frame_w}x{frame_h}  FPS={src_fps:.1f}  frames={total_fr}")
+
+    # --- Responsive working resolution ---------------------------------------
+    # Normalize every frame to a fixed working width (aspect preserved) so the
+    # HUD/overlays, ROI/lane coordinates, and click scale are independent of the
+    # camera's native resolution. Any camera (640x480, 1080p, ...) and any
+    # adaptive-bitrate resolution switch is mapped onto the same canvas.
+    REF_W = 1280
+    if src_w > 0 and src_h > 0 and src_w != REF_W:
+        frame_w = REF_W
+        frame_h = int(round(src_h * (REF_W / src_w)))
+    else:
+        frame_w, frame_h = (src_w or REF_W), (src_h or 720)
+    print(f"[INFO] Video: {src_w}x{src_h} -> work {frame_w}x{frame_h}  "
+          f"FPS={src_fps:.1f}  frames={total_fr}")
 
     # Warm up stream
     if is_stream:
@@ -1745,12 +1876,17 @@ def main():
                 except Exception:
                     pass
 
-        cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+        # Displayed window size. The working frame keeps its normalized
+        # resolution (frame_w x frame_h); only the on-screen copy is resized so
+        # the window fits the display. disp_w/disp_h == frame_w/frame_h means the
+        # frame is shown 1:1 (no display resize).
+        disp_w, disp_h = frame_w, frame_h
 
-        # Size the window to fit the screen on first open, and set the initial
-        # scale so mouse callbacks work correctly before the first imshow.
-        _win_w, _win_h = frame_w, frame_h
         if platform.system() == "Windows":
+            # Resizable window; the live loop re-syncs the click scale from the
+            # true Win32 client rect, so any user resize stays accurate.
+            cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+            _win_w, _win_h = frame_w, frame_h
             try:
                 import ctypes
                 _sw = ctypes.windll.user32.GetSystemMetrics(0)   # screen width
@@ -1761,17 +1897,31 @@ def main():
                     _win_w, _win_h = int(_win_w * _s), int(_win_h * _s)
             except Exception:
                 _win_w, _win_h = min(frame_w, 1280), min(frame_h, 720)
-        elif frame_w > 1920 or frame_h > 1080:
-            _s = min(1920 / frame_w, 1080 / frame_h)
-            _win_w, _win_h = int(frame_w * _s), int(frame_h * _s)
-
-        cv2.resizeWindow(WIN, _win_w, _win_h)
-        # Set initial coordinate scale so clicks work before the first frame arrives
-        ui.scale_x = frame_w / _win_w
-        ui.scale_y = frame_h / _win_h
+            cv2.resizeWindow(WIN, _win_w, _win_h)
+            ui.scale_x = frame_w / _win_w
+            ui.scale_y = frame_h / _win_h
+        else:
+            # macOS/Linux: getWindowImageRect can't report the displayed size
+            # reliably, so the per-frame scale resync is removed. Size the window
+            # once to FIT THE SCREEN (so the whole frame, incl. the lower ROI
+            # handles, stays on-screen) and set a constant click scale
+            # (frame_w / window_w) that never drifts. OpenCV scales the full
+            # frame into the window, so clicks at window coords map back exactly.
+            avail_w, avail_h = 1400, 800          # safe defaults (logical points)
+            _scr = _screen_size_pts()
+            if _scr:
+                avail_w, avail_h = _scr[0] - 40, _scr[1] - 120  # chrome + dock margin
+            _s = min(1.0, avail_w / frame_w, avail_h / frame_h)
+            disp_w = max(1, int(frame_w * _s))
+            disp_h = max(1, int(frame_h * _s))
+            cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(WIN, disp_w, disp_h)
+            ui.scale_x = ui.scale_y = frame_w / disp_w
 
         cb = make_mouse_callback(ui, scene_cfg, (frame_w, frame_h))
         cv2.setMouseCallback(WIN, cb)
+        print(f"[WIN] frame={frame_w}x{frame_h} display={disp_w}x{disp_h} "
+              f"click_scale={ui.scale_x:.3f}")
 
     print("=" * 44)
     print(" Vehicle Counter  (OpenCV DNN)")
@@ -1867,10 +2017,20 @@ def main():
             ui.mode = UIMode.ADD_LANE
         elif key == ord('r') or key == ord('R'):
             if ui.mode == UIMode.EDIT_SCENE:
-                ui.roi_draft = list(scene_cfg.roi_pts)
-                scene_cfg.roi_pts = []
-                scene_cfg.roi_enabled = False
-                ui.mode = UIMode.DRAW_ROI
+                # Drop a default rectangle ROI (10% margins) and stay in edit
+                # mode so the corners can be dragged to fit — more reliable than
+                # clicking each polygon point.
+                mx, my = int(frame_w * 0.10), int(frame_h * 0.10)
+                scene_cfg.roi_pts = [
+                    (mx, my),
+                    (frame_w - mx, my),
+                    (frame_w - mx, frame_h - my),
+                    (mx, frame_h - my),
+                ]
+                scene_cfg.roi_enabled = True
+                ui.selected_roi_pt = -1
+                ui.drag_target = DragTarget.NONE
+                ui.need_save = True
         elif key == ord('c') or key == ord('C'):
             if ui.mode == UIMode.EDIT_SCENE:
                 scene_cfg.roi_pts = []
@@ -1959,6 +2119,11 @@ def main():
                     continue
                 break  # end of file
             _reconnect_n = 0
+            # Normalize to the fixed working resolution (handles cameras of any
+            # native size and adaptive-bitrate resolution switches).
+            if frame.shape[1] != frame_w or frame.shape[0] != frame_h:
+                frame = cv2.resize(frame, (frame_w, frame_h),
+                                   interpolation=cv2.INTER_LINEAR)
             last_good_frame = frame
 
         frame_idx += 1
@@ -2094,9 +2259,11 @@ def main():
                             ui.scale_y = sy0
                     _scale_synced = True
 
-                # Keep scale in sync when the user resizes the window.
-                # On Windows use Win32 GetClientRect (physical pixels, same space
-                # as WM_MOUSEMOVE). On macOS/Linux use getWindowImageRect.
+                # Keep scale in sync when the user resizes the window (Windows
+                # only — uses Win32 GetClientRect in the same pixel space as
+                # WM_MOUSEMOVE). On macOS/Linux the window is fixed-size
+                # (WINDOW_AUTOSIZE) and the scale is the constant set above, so
+                # nothing to re-sync — getWindowImageRect is unreliable there.
                 if platform.system() == "Windows":
                     _wcs = _win32_client_size(WIN)
                     if _wcs:
@@ -2105,17 +2272,7 @@ def main():
                         if 0.05 < sx < 20 and 0.05 < sy < 20:
                             ui.scale_x = sx
                             ui.scale_y = sy
-                else:
-                    try:
-                        wr = cv2.getWindowImageRect(WIN)
-                        if wr[2] > 10 and wr[3] > 10:
-                            sx = frame_w / wr[2]
-                            sy = frame_h / wr[3]
-                            if 0.05 < sx < 20 and 0.05 < sy < 20:
-                                ui.scale_x = sx
-                                ui.scale_y = sy
-                    except Exception:
-                        pass
+                # macOS/Linux: fixed-size window, scale is constant — no resync.
 
         # --- Auto-save ---
         if ui.need_save and scene_path:

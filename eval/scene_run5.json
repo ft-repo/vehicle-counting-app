@@ -4,42 +4,46 @@
     "enabled": true,
     "points": [
       [
-        688,
-        164
+        1309,
+        663
       ],
       [
-        791,
-        167
+        1233,
+        180
       ],
       [
-        1270,
-        567
-      ],
-      [
-        1270,
-        950
+        1084,
+        179
       ],
       [
         10,
-        950
+        422
       ],
       [
         10,
-        517
+        694
+      ],
+      [
+        10,
+        1070
+      ],
+      [
+        1365,
+        1070
       ]
     ]
   },
   "lanes": [
     {
-      "id": 1,
-      "name": "Lane 1",
+      "id": 2,
+      "name": "Lane 2",
       "enabled": true,
-      "color": "#00FF00",
+      "color": "#FF8800",
       "line": {
-        "x1": 579,
-        "y1": 573,
-        "x2": 805,
-        "y2": 574
+        "x1": 936,
+        "y1": 716,
+        "x2": 688,
+        "y2": 695
       },
       "direction": "both",
       "arrow_in": "top_to_bottom",
@@ -47,15 +51,31 @@
       "count_out": true
     },
     {
-      "id": 2,
-      "name": "Lane 2",
+      "id": 3,
+      "name": "Lane 3",
       "enabled": true,
-      "color": "#FF8800",
+      "color": "#00AAFF",
       "line": {
-        "x1": 808,
-        "y1": 573,
-        "x2": 1050,
-        "y2": 573
+        "x1": 938,
+        "y1": 713,
+        "x2": 1312,
+        "y2": 743
+      },
+      "direction": "both",
+      "arrow_in": "top_to_bottom",
+      "count_in": true,
+      "count_out": true
+    },
+    {
+      "id": 4,
+      "name": "Lane 4",
+      "enabled": true,
+      "color": "#FF00FF",
+      "line": {
+        "x1": 675,
+        "y1": 694,
+        "x2": 301,
+        "y2": 655
       },
       "direction": "both",
       "arrow_in": "top_to_bottom",
@@ -65,11 +85,11 @@
   ],
   "camera": {
     "source": "https://69mst-ktpsv1.enixma.net/live/10.207.200.109.stream/playlist.m3u8",
-    "width": 640,
-    "height": 480
+    "width": 1280,
+    "height": 960
   },
   "yolo": {
-    "onnx": "model_compare/yolo26n/run6/weights/best.onnx",
+    "onnx": "/Users/puen/Desktop/vehicle-counting-app/eval/run6_best.onnx",
     "names": "models/traffic14.names",
     "cfg": "models/yolov4-tiny-drr7-day.cfg",
     "weights": "models/yolov4-tiny-drr7-day.weights",
@@ -105,12 +125,6 @@
   },
   "model_presets": [
     {
-      "label": "YOLO26n run6",
-      "onnx": "model_compare/yolo26n/run6/weights/best.onnx",
-      "names": "models/traffic14.names",
-      "input_size": 416
-    },
-    {
       "label": "YOLO26n run4",
       "onnx": "model_compare/yolo26n/run4/weights/best.onnx",
       "names": "models/traffic14.names",
@@ -119,6 +133,12 @@
     {
       "label": "YOLOv8n run5 (legacy bench)",
       "onnx": "model_compare/yolov8n/run5/weights/best.onnx",
+      "names": "models/coco_drr7.names",
+      "input_size": 416
+    },
+    {
+      "label": "YOLO11n run2 (legacy bench)",
+      "onnx": "model_compare/yolo11n/run2/weights/best.onnx",
       "names": "models/coco_drr7.names",
       "input_size": 416
     }
