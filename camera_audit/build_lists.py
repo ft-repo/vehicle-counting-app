@@ -36,6 +36,10 @@ from pathlib import Path
 SRC = "diversity_scores.csv"
 TRAIN_OUT = "labeling_list.csv"
 VAL_OUT = "validation_holdout.csv"
+# redacted, safe-to-commit twins (no stream_url / camera_id)
+TRAIN_MANIFEST = "labeling_manifest.csv"
+VAL_MANIFEST = "validation_manifest.csv"
+REDACT_DROP = {"stream_url", "camera_id", "labeled", "frames_pulled", "notes"}
 
 LOW = "low (snapshot empty — verify)"
 
@@ -76,6 +80,28 @@ def emit(fn, data, split):
             })
 
 
+def emit_manifest(fn, data, split):
+    """Redacted, safe-to-commit version: drops stream_url / camera_id / tracking."""
+    cols = ["rank_by_diversity", "label_priority", "viewpoint", "score",
+            "n_confused_classes", "n_rare_classes", "avg_objs_per_frame",
+            "frames_seen", "sessions", "camera_index", "classes", "split"]
+    data = sorted(data, key=lambda x: -float(x["score"]))
+    with open(fn, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols); w.writeheader()
+        for i, r in enumerate(data, 1):
+            w.writerow({
+                "rank_by_diversity": i, "label_priority": tier(r),
+                "viewpoint": r.get("viewpoint", ""), "score": r["score"],
+                "n_confused_classes": r["n_confused_classes"],
+                "n_rare_classes": r["n_rare_classes"],
+                "avg_objs_per_frame": r["avg_objs_per_frame"],
+                "frames_seen": r.get("frames_seen", ""),
+                "sessions": r.get("sessions", ""),
+                "camera_index": r["camera_index"],
+                "classes": r.get("classes", ""), "split": split,
+            })
+
+
 def composition(data, label):
     t = Counter(tier(r) for r in data)
     withc = sum(1 for r in data if int(r["n_confused_classes"]) >= 1)
@@ -113,6 +139,9 @@ def main():
 
     emit(TRAIN_OUT, train, "TRAIN")
     emit(VAL_OUT, holdout, "VAL_HOLDOUT_unseen_camera")
+    # redacted twins — safe to commit / share (no URLs or IDs)
+    emit_manifest(TRAIN_MANIFEST, train, "TRAIN")
+    emit_manifest(VAL_MANIFEST, holdout, "VAL_HOLDOUT_unseen_camera")
 
     ti = {r["camera_index"] for r in train}
     hi = {r["camera_index"] for r in holdout}

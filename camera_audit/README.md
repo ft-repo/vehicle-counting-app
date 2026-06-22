@@ -123,6 +123,7 @@ that number tells you whether run7 actually fixed the confusion.
 | `angle_discovery/` | frames, reps, assignments | ❌ local only |
 | `diversity_tally.json` / `diversity_scores.csv` | cumulative detections + ranking (with URLs) | ❌ local only |
 | `labeling_list.csv` / `validation_holdout.csv` | train/val camera lists (with URLs) | ❌ local only |
+| `labeling_manifest.csv` / `validation_manifest.csv` | redacted twins — ranking/priority/class-counts, NO urls or ids | ✅ safe to commit |
 
 ## Notes
 

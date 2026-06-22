@@ -14,4 +14,5 @@ retry_run.log
 diversity_run.log
 
 # Keep: *.py (discover_angles, score_diversity, build_lists, cluster_cameras),
-#       README.md, this .gitignore
+#       README.md, this .gitignore,
+#       labeling_manifest.csv / validation_manifest.csv (redacted — no urls/ids)
