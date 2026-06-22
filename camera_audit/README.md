@@ -65,21 +65,34 @@ slight downtilt) → a model *can* generalize. The real variance is lane count +
 vehicle scale/distance + scene clutter, worst in **VP02**, where the confused
 classes co-occur at distance.
 
-### 3. Build the stratified train list
-Sample cameras per bucket, over-weighting VP02. → `labeling_list.csv`.
+### 3. Score cameras by class diversity + traffic density
+Viewpoint spread is the wrong selector for class confusion — we need cameras
+whose frames actually contain the confused classes (car/pickup/truck/bus/taxi)
+and rare ones (tuktuk/cone/trailer/van) in busy traffic, not empty roads.
+```bash
+# run during a busy window (Tailscale up); accumulates across sessions
+python score_diversity.py --reset --rounds 3 --interval 120   # morning rush
+python score_diversity.py --rounds 3 --interval 120           # evening rush, adds on
+```
+- Uses the **run6** detector (`eval/run6_best.onnx`, imgsz 416) over frames
+  grabbed from each reachable camera.
+- **Accumulates** into `diversity_tally.json` — a single snapshot undersamples
+  traffic (a rush-hour road reads empty at 2pm), so run it across several busy
+  windows; distinct-class presence + density grow toward the truth.
+- Writes `diversity_scores.csv` (ranked, local).
 
-### 4. Build the validation hold-out
-All reachable cameras NOT in the train list → `validation_holdout.csv`.
-Camera-level split (no camera in both) so validation measures generalization to
-**unseen cameras**, not memorization.
+### 4. Build the train / validation lists
+```bash
+python build_lists.py --train-size 60
+```
+Both lists are drawn from the *diverse* cameras (so val also contains the
+confused classes); every 4th diverse camera (by rank) is reserved for val.
+Camera-level split (no camera in both) → val measures generalization to
+**unseen cameras**. Priority tiers (label top-down): **high** (≥2 confused, or
+confused+rare) → **medium** (≥1 confused or rare) → **low** (nothing seen yet —
+quiet-snapshot, resolves as you run more scoring sessions).
 
-**Current split (rebalanced 21/6 on VP02):**
-| Bucket | Train | Val (unseen) |
-|---|---|---|
-| VP00 rural 2-lane | 15 | 11 |
-| VP01 highway 2-lane | 20 | 22 |
-| VP02 multilane urban (priority) | 21 | 6 |
-| **TOTAL** | **56** | **39** |
+Outputs: `labeling_list.csv` (TRAIN) + `validation_holdout.csv` (VAL).
 
 ## Intern handoff
 
@@ -103,9 +116,12 @@ that number tells you whether run7 actually fixed the confusion.
 | File | Contents | Share? |
 |---|---|---|
 | `discover_angles.py` | viewpoint-discovery pipeline | ✅ code only |
+| `score_diversity.py` | rank cameras by class diversity + density (run6); accumulates across busy windows | ✅ code only |
+| `build_lists.py` | turn the ranking into the train/val split | ✅ code only |
 | `cluster_cameras.py` | metadata-based clustering (unused — sheet has no viewpoint columns) | ✅ code only |
 | `counting_cameras.txt` | 118 counting-camera stream URLs | ❌ local only |
 | `angle_discovery/` | frames, reps, assignments | ❌ local only |
+| `diversity_tally.json` / `diversity_scores.csv` | cumulative detections + ranking (with URLs) | ❌ local only |
 | `labeling_list.csv` / `validation_holdout.csv` | train/val camera lists (with URLs) | ❌ local only |
 
 ## Notes

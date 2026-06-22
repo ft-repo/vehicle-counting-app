@@ -7,7 +7,11 @@ cameras.xlsx
 labeling_list.csv
 validation_holdout.csv
 angle_discovery/
+diversity_tally.json
+diversity_scores.csv
 angle_run.log
 retry_run.log
+diversity_run.log
 
-# Keep: discover_angles.py, cluster_cameras.py, README.md, this .gitignore
+# Keep: *.py (discover_angles, score_diversity, build_lists, cluster_cameras),
+#       README.md, this .gitignore
