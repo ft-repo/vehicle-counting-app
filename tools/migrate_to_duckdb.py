@@ -38,15 +38,19 @@ def migrate_crossings(con, csv_path, source_file=None):
 def migrate_eval_json(con, json_path, kind, model_version):
     """Load a counting/val results JSON into eval_runs. Idempotent per (kind, model)."""
     json_path = Path(json_path)
-    data = json.loads(json_path.read_text())
+    data = json.loads(json_path.read_text(encoding="utf-8"))
     con.execute("DELETE FROM eval_runs WHERE kind = ? AND model_version = ?",
                 [kind, model_version])
     if kind == "counting":
         metric, value = "overall_abs_count_error_rate", data.get("overall_abs_count_error_rate")
         ts = "1970-01-01 00:00:00"  # counting JSON has no timestamp; set on re-export
-    else:  # val
+    elif kind == "val":
         metric, value = "overall_map50", data.get("overall_map50")
         ts = data.get("timestamp", "1970-01-01 00:00:00").replace("T", " ").replace("Z", "")
+    else:
+        raise ValueError(f"Unknown eval kind: {kind!r}")
+    if value is None:
+        raise KeyError(f"{json_path}: missing metric '{metric}' for kind '{kind}'")
     store.insert_eval_run(con, ts, kind, model_version, metric, value, json.dumps(data))
 
 

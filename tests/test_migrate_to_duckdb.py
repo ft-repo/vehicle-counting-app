@@ -1,3 +1,5 @@
+import json
+import pytest
 import tools.vca_store as store
 import tools.migrate_to_duckdb as mig
 
@@ -27,3 +29,43 @@ def test_migrate_crossings_is_idempotent(tmp_path):
     mig.migrate_crossings(con, csv, source_file="vehicle_counts.csv")  # twice
     total = con.execute("SELECT COUNT(*) FROM crossings").fetchone()[0]
     assert total == 2  # not 4
+
+
+def test_migrate_eval_json_counting(tmp_path):
+    """Test migrate_eval_json with counting results."""
+    con = store.connect(tmp_path / "t.duckdb")
+    json_path = tmp_path / "counting.json"
+    json_path.write_text(json.dumps({"overall_abs_count_error_rate": 0.5, "total_counted": 10}))
+
+    mig.migrate_eval_json(con, json_path, "counting", "run6")
+
+    rows = con.execute("SELECT kind, model_version, metric, value FROM eval_runs").fetchall()
+    assert len(rows) == 1
+    kind, model_version, metric, value = rows[0]
+    assert kind == "counting"
+    assert model_version == "run6"
+    assert metric == "overall_abs_count_error_rate"
+    assert value == 0.5
+
+
+def test_migrate_eval_json_idempotent(tmp_path):
+    """Test that migrate_eval_json is idempotent."""
+    con = store.connect(tmp_path / "t.duckdb")
+    json_path = tmp_path / "counting.json"
+    json_path.write_text(json.dumps({"overall_abs_count_error_rate": 0.5, "total_counted": 10}))
+
+    mig.migrate_eval_json(con, json_path, "counting", "run6")
+    mig.migrate_eval_json(con, json_path, "counting", "run6")  # twice
+
+    total = con.execute("SELECT COUNT(*) FROM eval_runs").fetchone()[0]
+    assert total == 1  # not 2
+
+
+def test_migrate_eval_json_missing_metric_raises(tmp_path):
+    """Test that missing metric key raises KeyError."""
+    con = store.connect(tmp_path / "t.duckdb")
+    json_path = tmp_path / "counting.json"
+    json_path.write_text(json.dumps({"total_counted": 10}))  # missing metric
+
+    with pytest.raises(KeyError):
+        mig.migrate_eval_json(con, json_path, "counting", "run6")
