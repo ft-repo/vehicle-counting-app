@@ -1,7 +1,8 @@
 """Axis on-camera ML feasibility check (roadmap M0.5).
 
 Queries a camera's VAPIX Properties and classifies whether the on-device
-(DLPU) deploy path is viable. ARTPEC-8/9 -> on-camera; else -> Jetson fallback.
+(DLPU) deploy path is viable. ARTPEC-8/9 -> on-camera; else -> site needs a
+DLPU-capable Axis camera (ARTPEC-8/9).
 (See memory: vca-edge-deployment-target — lucius-fox verdict 2026-06-29.)
 
 Privacy: host/creds are runtime-only. Do NOT commit them. Output prints the
@@ -41,9 +42,12 @@ def classify(artpec_gen):
     return {
         "artpec_gen": artpec_gen,
         "on_camera_viable": False,
-        "recommendation": "jetson-fallback",
-        "reason": ("No DLPU-capable ARTPEC-8/9 detected — commit the Jetson Orin Nano "
-                   "companion-box fallback (runs the model unmodified at the edge)."),
+        "recommendation": "needs-dlpu-axis",
+        "reason": ("No DLPU-capable ARTPEC-8/9 detected — a DLPU-capable Axis camera "
+                   "(ARTPEC-8/9) is required at this site. If the model is too large for "
+                   "the DLPU, adapt the model (graph-cut before the detection head + "
+                   "per-tensor INT8, or use a smaller/leaner model variant). "
+                   "Non-Axis or companion-box hardware is not the fallback."),
     }
 
 
@@ -74,7 +78,8 @@ def main():
     if not res["reachable"]:
         print(f"UNREACHABLE: {res['error']}")
         print("Cannot determine chip over VAPIX. If the camera is only reachable on-site / via "
-              "the gateway, run this there. Until confirmed, plan for the Jetson fallback.")
+              "the gateway, run this there. Until confirmed, assume the site needs a "
+              "DLPU-capable Axis camera (ARTPEC-8/9).")
         return
 
     gen = detect_artpec(res["text"])
