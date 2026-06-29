@@ -50,3 +50,15 @@ __pycache__/
 # ── Temp / test files ────────────────────────────────────────────────────────
 *.tmp
 gdino_test_result.jpg
+
+# ── Eval artifacts (videos/images are large; regenerable) ───────────────────
+eval/*.mp4
+eval/*.jpg
+eval/*.jpeg
+eval/*.png
+# Keep small eval ground-truth + result JSON/CSV in git:
+!eval/*.json
+!eval/*.csv
+
+# ── Local data store (DuckDB — data, not code) ──────────────────────────────
+data/
