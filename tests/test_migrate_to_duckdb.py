@@ -69,3 +69,14 @@ def test_migrate_eval_json_missing_metric_raises(tmp_path):
 
     with pytest.raises(KeyError):
         mig.migrate_eval_json(con, json_path, "counting", "run6")
+
+
+def test_dedupe_crossings_removes_cross_source_duplicates(tmp_path):
+    con = store.connect(tmp_path / "t.duckdb")
+    # same event arriving from two different source files
+    store.insert_crossing(con, "2026-04-22 14:02:07", 6, "bike", "in", "Lane 3", source_file="a.csv")
+    store.insert_crossing(con, "2026-04-22 14:02:07", 6, "bike", "in", "Lane 3", source_file="b.csv")
+    store.insert_crossing(con, "2026-04-22 14:02:08", 7, "car", "out", "Lane 2", source_file="a.csv")
+    mig.dedupe_crossings(con)
+    total = con.execute("SELECT COUNT(*) FROM crossings").fetchone()[0]
+    assert total == 2  # the duplicated bike collapses to 1, the car stays

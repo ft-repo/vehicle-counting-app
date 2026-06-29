@@ -35,6 +35,21 @@ def migrate_crossings(con, csv_path, source_file=None):
     return n
 
 
+def dedupe_crossings(con):
+    """Remove duplicate crossing events that arrived from overlapping source
+    files. A crossing is identified by (ts, track_id, class, direction, lane);
+    keep exactly one regardless of which source_file it came from."""
+    con.execute(
+        """
+        DELETE FROM crossings
+        WHERE rowid NOT IN (
+            SELECT min(rowid) FROM crossings
+            GROUP BY ts, track_id, class, direction, lane
+        )
+        """
+    )
+
+
 def migrate_eval_json(con, json_path, kind, model_version):
     """Load a counting/val results JSON into eval_runs. Idempotent per (kind, model)."""
     json_path = Path(json_path)
@@ -76,8 +91,11 @@ def main():
             migrate_eval_json(con, p, kind, model)
             print(f"  eval: {rel} ({kind}/{model})")
 
+    dedupe_crossings(con)
+    total = con.execute("SELECT COUNT(*) FROM crossings").fetchone()[0]
     print(f"Done. {total} crossings in store.")
     print("By class:", store.counts_by_class(con))
+    con.close()
 
 
 if __name__ == "__main__":

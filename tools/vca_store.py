@@ -45,7 +45,7 @@ def insert_crossing(con, ts, track_id, cls, direction, lane,
                     camera_id=None, model_version=None, source_file=None):
     """Record one lane-crossing event."""
     con.execute(
-        "INSERT INTO crossings VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO crossings (ts, track_id, class, direction, lane, camera_id, model_version, source_file) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [ts, track_id, cls, direction, lane, camera_id, model_version, source_file],
     )
 
@@ -53,7 +53,7 @@ def insert_crossing(con, ts, track_id, cls, direction, lane,
 def insert_eval_run(con, ts, kind, model_version, metric, value, payload):
     """Record one eval result (kind = 'counting' | 'val')."""
     con.execute(
-        "INSERT INTO eval_runs VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO eval_runs (ts, kind, model_version, metric, value, payload) VALUES (?, ?, ?, ?, ?, ?)",
         [ts, kind, model_version, metric, value, payload],
     )
 

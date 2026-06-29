@@ -32,6 +32,7 @@ def test_classify_8_is_on_camera():
 
 def test_classify_9_is_on_camera():
     assert cc.classify(9)["on_camera_viable"] is True
+    assert cc.classify(9)["recommendation"] == "on-camera"
 
 
 def test_classify_7_is_fallback():
