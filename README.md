@@ -26,7 +26,7 @@ Real-time vehicle detection, tracking, and lane-crossing counting for CCTV and I
 ## Features
 
 - Multi-model support — **YOLO26n** (primary, NMS-free), YOLOv4-tiny (Darknet), YOLOv8n, YOLO11n via OpenCV DNN
-- Centroid IoU tracker with configurable lost-frame timeout
+- Centroid IoU tracker with configurable lost-frame timeout, motion-aware recovery for fast-moving vehicles, and stable per-vehicle class labelling across frames
 - Per-lane directional counting (in / out) using cross-product line test
 - Polygon ROI masking to restrict detection to the road area
 - Day/Night model auto-switching by brightness and time of day
@@ -102,6 +102,13 @@ bash setup/install.sh  # Linux
 A step-by-step beginner guide (in Thai, for Windows) covering the full data-to-training
 workflow — from opening a terminal through frame extraction, labeling, and starting a
 training run: **[`docs/training-guide-th.pdf`](docs/training-guide-th.pdf)**.
+
+The standalone camera teaching check is available at `teaching/test_cam.py`:
+
+```bash
+python teaching/test_cam.py 0
+python teaching/test_cam.py "rtsp://user:pass@<tailscale-ip>/axis-media/media.amp"
+```
 
 To regenerate the PDF after editing the source (`docs/training-guide-th.md`):
 
@@ -325,6 +332,30 @@ Each saved frame writes a sidecar JSON next to the JPG with `lapvar`, `min_confi
 
 ---
 
+## New-Dataset Intake
+
+Gathers the dataset into one organized folder on the DGX. Run on the DGX, it copies images and their YOLO labels from the source folder(s) into `/home/admin/newdataset/`, drops exact-duplicate files, and zips the result to `/home/admin/newdataset.zip`.
+
+```bash
+# gather from the built-in source folders
+python tools/newdataset_intake.py
+
+# or point it at a specific dataset folder
+python tools/newdataset_intake.py /home/admin/<dataset-folder>
+```
+
+Result:
+
+```
+newdataset/
+  images/     deduplicated frames
+  labels/     matching YOLO labels where available
+```
+
+Source folders are the `SOURCES` list at the top of `tools/newdataset_intake.py` (edit there, or pass folders on the command line). Re-running skips frames already in the folder.
+
+---
+
 ## Dashboard
 
 The terminal dashboard launches automatically via `run_camera.py`.
@@ -417,12 +448,13 @@ vehicle-counting-app/
 │   ├── yolo26n/run4/weights/best.{pt,onnx}  # DEPLOYED (14-class) — see registry
 │   ├── yolov8n/run5, yolo11n/run2           # legacy / bench (onnx)
 │   ├── registry.py            # resolves the deployed model from model_registry.json
-│   ├── build_split.py         # canonical train/val/test split (flat LS export aware)
+│   ├── build_split.py         # THE single split builder — config-driven multi-source (manifest/LS/recovery) + corpus mode
 │   ├── auto_label.py          # auto-label images (class names read from the model)
 │   └── tracker.py / tracker_live.py / compare.py / dashboard.py
 │
 ├── tools/
 │   ├── frame_extractor.py     # extract frames from RTSP / video
+│   ├── newdataset_intake.py   # gather + dedup new data from all sources → one organized folder
 │   ├── gdino_ls_backend.py    # Grounding DINO — Label Studio ML backend
 │   ├── export_approved.py     # export reviewer-approved labels from LS
 │   ├── remap_ls_export.py     # remap LS export class ids → canonical by NAME
