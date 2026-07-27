@@ -1,0 +1,19 @@
+# Local-only: camera URLs / IPs / frames — NEVER commit these.
+counting_cameras.txt
+cameras.txt
+cameras.csv
+cameras.xlsx
+*.xlsx
+labeling_list.csv
+validation_holdout.csv
+angle_discovery/
+overview/
+diversity_tally.json
+diversity_scores.csv
+angle_run.log
+retry_run.log
+diversity_run.log
+
+# Keep: *.py (discover_angles, score_diversity, build_lists, cluster_cameras),
+#       README.md, this .gitignore,
+#       labeling_manifest.csv / validation_manifest.csv (redacted — no urls/ids)
